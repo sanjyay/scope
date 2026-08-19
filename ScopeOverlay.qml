@@ -1,16 +1,17 @@
 // ScopeOverlay — full-screen Wayland layer surface for a single screen.
 //
 // One instance per connected screen. Visible only when Scope is active.
-// Hosts the lasso canvas, ask bubble, result card, and error toast.
+// Hosts the lasso canvas, search result card, and error toast.
 //
 // The overlay is always "mapped" (keepLoaded:true) but only visible and
 // interactive when scopeState !== "Idle". Keyboard focus is grabbed only
-// when the text input is needed (Prompting or Complete states).
+// while Scope is active so Escape always cancels immediately.
 
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Ui
 import "components"
 
 PanelWindow {
@@ -30,11 +31,16 @@ PanelWindow {
   property bool agentDetectionDone: false
   property string responseText: ""
   property string errorText: ""
+  property var webSources: []
+  property string pendingQuestion: ""
+  property bool escalationPending: false
 
   // ── signals to parent ─────────────────────────────────────────────────────
   signal lassoComplete(var points, var bbox)
-  signal questionSubmitted(string question)
   signal cancelled()
+  signal requestOpenAgent()
+  signal followUpSubmitted(string question)
+  signal sourceOpenFailed()
   signal dismissed()
 
   // ── which screen this overlay belongs to ─────────────────────────────────
@@ -45,7 +51,6 @@ PanelWindow {
 
   // ── Wayland layer shell setup ─────────────────────────────────────────────
 
-  QsWindow.screen: panel.screen
   anchors { top: true; bottom: true; left: true; right: true }
   color: "transparent"
 
@@ -53,11 +58,10 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Overlay
   exclusionMode: ExclusionMode.Ignore
 
-  // Grab keyboard only when input is needed
-  WlrLayershell.keyboardFocus: (
-    isActiveScreen &&
-    (scopeState === "Prompting" || scopeState === "Complete")
-  ) ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+  // Grab keyboard to ensure Escape always works
+  WlrLayershell.keyboardFocus: (isActiveScreen && scopeState !== "Idle")
+    ? WlrKeyboardFocus.Exclusive
+    : WlrKeyboardFocus.None
 
   // Panel is visible whenever Scope is active
   visible: scopeState !== "Idle"
@@ -66,14 +70,16 @@ PanelWindow {
 
   Rectangle {
     anchors.fill: parent
-    color: "black"
+    // Omarchy's image-picker scrim is the shared full-screen overlay role.
+    color: Color.imagePicker.scrim
     opacity: {
       switch (scopeState) {
-        case "Selecting":    return 0.30
-        case "Prompting":
+        case "Selecting":    return 0.60
         case "Capturing":
-        case "AgentRunning":
-        case "Complete":     return 0.52
+        case "Searching":
+        case "Result":       return 1.0
+        case "UnsupportedAgent": return 1.0
+        case "Error":        return 1.0
         default:             return 0.0
       }
     }
@@ -89,28 +95,27 @@ PanelWindow {
   Rectangle {
     id: selHighlight
     visible: isActiveScreen && selectionW > 0 && selectionH > 0 && (
-      scopeState === "Prompting" ||
       scopeState === "Capturing" ||
-      scopeState === "AgentRunning" ||
-      scopeState === "Complete"
+      scopeState === "Searching" ||
+      scopeState === "Result"
     )
 
     // selectionX/Y are screen-absolute; this PanelWindow covers the whole screen
     // anchored to the screen origin, so we use the coords directly.
-    x: selectionX
-    y: selectionY
+    x: selectionX - panel.screen.x
+    y: selectionY - panel.screen.y
     width: selectionW
     height: selectionH
     color: "transparent"
-    radius: 4
+    radius: Style.cornerRadius
 
     // Bright border around the selection
     Rectangle {
       anchors.fill: parent
       anchors.margins: -2
       color: "transparent"
-      border.color: Qt.rgba(1, 1, 1, 0.35)
-      border.width: 1.5
+      border.color: Color.imagePicker.selectedBorder
+      border.width: Math.max(Style.spacing.hairline, Style.space(2))
       radius: parent.radius + 2
     }
 
@@ -127,10 +132,10 @@ PanelWindow {
         required property var modelData
         x: selHighlight.width * modelData.ax + modelData.ax2
         y: selHighlight.height * modelData.ay + modelData.ay2
-        width: 6
-        height: 6
-        radius: 3
-        color: Qt.rgba(1, 1, 1, 0.7)
+        width: Style.spacing.md
+        height: Style.spacing.md
+        radius: Math.min(Style.cornerRadius, width / 2)
+        color: Color.imagePicker.selectedBorder
       }
     }
   }
@@ -143,10 +148,10 @@ PanelWindow {
     visible: isActiveScreen && scopeState === "Selecting"
     enabled: isActiveScreen && scopeState === "Selecting"
 
-    // Screen origin for coordinate conversion.
-    // In a full-screen PanelWindow, the window origin IS the screen origin.
-    screenX: 0
-    screenY: 0
+    // Screen origin for coordinate conversion (Wayland global space).
+    // Required because grim uses global geometry across all monitors.
+    screenX: panel.screen.x
+    screenY: panel.screen.y
 
     onComplete: function(points, bbox) {
       panel.lassoComplete(points, bbox)
@@ -154,70 +159,37 @@ PanelWindow {
     onCancelled: panel.cancelled()
   }
 
-  // ── ask bubble ────────────────────────────────────────────────────────────
-
-  AskBubble {
-    id: askBubble
-
-    visible: isActiveScreen && scopeState === "Prompting"
-    enabled: isActiveScreen && scopeState === "Prompting"
-
-    // Width and positioning
-    readonly property real bw: Math.min(380, panel.width - 48)
-    width: bw
-
-    // Anchor point: center-bottom of the selection (or center of screen)
-    readonly property real anchorCX: selectionW > 0
-      ? selectionX + selectionW / 2
-      : panel.width / 2
-    readonly property real anchorCY: selectionH > 0
-      ? selectionY + selectionH
-      : panel.height / 2
-
-    x: Math.max(16, Math.min(anchorCX - bw / 2, panel.width - bw - 16))
-    y: {
-      var below = anchorCY + 16
-      var above = (selectionH > 0 ? selectionY : panel.height / 2) - implicitHeight - 16
-      return (below + implicitHeight < panel.height - 16) ? below : Math.max(16, above)
-    }
-
-    agentName: panel.detectedAgent
-    agentDetected: panel.agentDetected
-    agentDetectionDone: panel.agentDetectionDone
-
-    onSubmitted: function(question) { panel.questionSubmitted(question) }
-    onCancelled: panel.cancelled()
-
-    onVisibleChanged: {
-      if (visible) Qt.callLater(function() { askBubble.focusInput() })
-    }
-  }
-
   // ── result card ───────────────────────────────────────────────────────────
 
   ResultCard {
+    onOpenAgent: panel.requestOpenAgent()
+    onFollowUpSubmitted: function(question) { panel.followUpSubmitted(question) }
+    onSourceOpenFailed: panel.sourceOpenFailed()
     id: resultCard
+    webSources: panel.webSources
 
     visible: isActiveScreen && (
-      scopeState === "Capturing" ||
-      scopeState === "AgentRunning" ||
-      scopeState === "Complete"
+      scopeState === "Capturing" || scopeState === "Searching" || scopeState === "Result"
     )
     enabled: isActiveScreen
 
     scopeState: panel.scopeState
     responseText: panel.responseText
     agentName: panel.detectedAgent
+    escalationPending: panel.escalationPending
 
     // Width and positioning
     readonly property real cw: Math.min(500, panel.width - 48)
     width: cw
 
+    readonly property real localSelX: selectionX - panel.screen.x
+    readonly property real localSelY: selectionY - panel.screen.y
+
     readonly property real anchorCX: selectionW > 0
-      ? selectionX + selectionW / 2
+      ? localSelX + selectionW / 2
       : panel.width / 2
     readonly property real anchorCY: selectionH > 0
-      ? selectionY + selectionH + 20
+      ? localSelY + selectionH + 20
       : panel.height / 2
 
     x: Math.max(24, Math.min(anchorCX - cw / 2, panel.width - cw - 24))
@@ -231,30 +203,30 @@ PanelWindow {
 
   // ── unsupported agent notice ──────────────────────────────────────────────
 
-  Rectangle {
+  BorderSurface {
     id: noAgentNotice
-    visible: isActiveScreen && scopeState === "Prompting" &&
-             panel.agentDetectionDone && !panel.agentDetected
+    visible: isActiveScreen && scopeState === "UnsupportedAgent"
 
     anchors.centerIn: parent
     width: Math.min(380, panel.width - 48)
-    height: noAgentCol.implicitHeight + 40
-    radius: 14
-    color: Qt.rgba(0.07, 0.08, 0.10, 0.97)
-    border.color: Qt.rgba(1, 0.35, 0.35, 0.5)
-    border.width: 1
+    height: noAgentCol.implicitHeight + Style.spacing.panelPadding * 2
+    radius: Style.cornerRadius
+    color: Color.popups.background
+    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border,
+                                  Math.max(1, Style.spacing.hairline))
 
     Column {
       id: noAgentCol
       anchors.centerIn: parent
-      width: parent.width - 40
-      spacing: 12
+      width: parent.width - Style.spacing.panelPadding * 2
+      spacing: Style.spacing.xxl
 
       Text {
         width: parent.width
-        text: "No supported AI agent found"
-        color: "#cacccc"
-        font.pixelSize: 15
+        text: "Scope Search"
+        color: Color.popups.text
+        font.pixelSize: Style.font.title
+        font.family: Style.font.menuFamily
         font.weight: Font.Medium
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
@@ -262,9 +234,11 @@ PanelWindow {
 
       Text {
         width: parent.width
-        text: "Scope requires Codex or Claude Code to be installed.\n\nInstall one to use Scope."
-        color: Qt.rgba(0.78, 0.8, 0.8, 0.75)
-        font.pixelSize: 13
+        text: "Scope currently supports Codex only.\n\nCurrent Omarchy agent:\n" + panel.displayAgent(panel.detectedAgent) + "\n\nSwitch your default agent to Codex\nand open Scope again."
+        color: Color.popups.text
+        opacity: 0.78
+        font.pixelSize: Style.font.body
+        font.family: Style.font.menuFamily
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         lineHeight: 1.4
@@ -272,26 +246,52 @@ PanelWindow {
 
       Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        width: 120
-        height: 34
-        radius: 8
-        color: Qt.rgba(0.78, 0.8, 0.8, 0.10)
-        border.color: Qt.rgba(0.78, 0.8, 0.8, 0.20)
-        border.width: 1
+        property bool hovered: false
+        property bool pressed: false
+        width: Style.space(120)
+        height: Style.spacing.controlHeight
+        radius: Style.cornerRadius
+        color: pressed ? Style.pressedFill : Style.controlFill(false, hovered, Color.popups.text, Color.accent)
+        border.color: Style.controlBorder(false, hovered, Color.popups.text, Color.accent)
+        border.width: Style.controlBorderWidth(false, hovered)
 
         Text {
           anchors.centerIn: parent
-          text: "Cancel"
-          color: "#cacccc"
-          font.pixelSize: 13
+          text: "Close"
+          color: Color.popups.text
+          font.pixelSize: Style.font.body
+          font.family: Style.font.menuFamily
         }
 
         MouseArea {
           anchors.fill: parent
+          hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
+          onEntered: parent.hovered = true
+          onExited: parent.hovered = false
+          onPressed: parent.pressed = true
+          onReleased: parent.pressed = false
           onClicked: panel.cancelled()
         }
       }
+    }
+  }
+
+  function displayAgent(agent) {
+    switch ((agent || "").toLowerCase()) {
+      case "codex": return "Codex"
+      case "opencode": return "OpenCode"
+      case "claude": return "Claude"
+      case "antigravity":
+      case "agy": return "Antigravity"
+      case "grok":
+      case "grok-build": return "Grok"
+      case "gemini": return "Gemini"
+      case "copilot": return "Copilot"
+      case "crush": return "Crush"
+      case "pi": return "Pi"
+      case "omp": return "Oh My Pi"
+      default: return "Unknown"
     }
   }
 
@@ -305,13 +305,9 @@ PanelWindow {
     anchors.bottomMargin: 40
   }
 
-  // ── global key handler ────────────────────────────────────────────────────
-
-  Keys.onPressed: function(event) {
-    if (event.key === Qt.Key_Escape) {
-      event.accepted = true
-      panel.cancelled()
-    }
+  Shortcut {
+    sequence: "Escape"
+    onActivated: panel.cancelled()
   }
 
   // ── click-outside dismissal ───────────────────────────────────────────────
@@ -319,7 +315,7 @@ PanelWindow {
   MouseArea {
     anchors.fill: parent
     z: -1
-    enabled: isActiveScreen && (scopeState === "Prompting" || scopeState === "Complete")
+    enabled: isActiveScreen && scopeState === "Result"
     onClicked: panel.cancelled()
   }
 }

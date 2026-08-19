@@ -1,0 +1,4 @@
+#!/bin/bash
+# The known-good Codex implementation remains in scope-helper; this adapter is
+# its stable dispatch boundary while migration keeps the exact invocation intact.
+scope_adapter_codex_search() { invoke_codex_search "$@"; }

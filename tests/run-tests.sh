@@ -49,7 +49,7 @@ assert_output_contains() {
   shift 2
   local output
   output=$("$@" 2>&1) || true
-  if echo "$output" | grep -qF "$expected"; then
+  if echo "$output" | grep -qF -- "$expected"; then
     pass "$desc"
   else
     fail "$desc: expected '$expected' in output, got: $output"
@@ -62,7 +62,7 @@ assert_not_output_contains() {
   shift 2
   local output
   output=$("$@" 2>&1) || true
-  if echo "$output" | grep -qF "$unexpected"; then
+  if echo "$output" | grep -qF -- "$unexpected"; then
     fail "$desc: unexpected '$unexpected' in output"
   else
     pass "$desc"
@@ -222,7 +222,7 @@ assert_exit_nonzero "analyze: image outside runtime" \
 assert_exit_nonzero "analyze: image path traversal" \
   "$HELPER" analyze "$ANA_ID" "$RUNTIME_BASE/../../etc/passwd" "$FAKE_QUESTION" "codex"
 
-# Question file outside runtime  
+# Question file outside runtime
 assert_exit_nonzero "analyze: question outside runtime" \
   "$HELPER" analyze "$ANA_ID" "$FAKE_PNG" "/etc/passwd" "codex"
 
@@ -242,7 +242,7 @@ mkdir -p "$INJ_DIR"
 chmod 700 "$INJ_DIR"
 
 # Sentinel file — presence indicates an injection succeeded
-SENTINEL="/tmp/scope-injection-test-$$"
+SENTINEL="$INJ_DIR/injection-sentinel"
 rm -f "$SENTINEL"
 
 # Create a minimal test PNG for the analyze calls
@@ -295,7 +295,7 @@ echo "§6 Agent detection"
 
 DETECT_OUT=$("$DETECT" 2>/dev/null) || true
 case "$DETECT_OUT" in
-  codex|claude|none) pass "detect-agent: output is valid ($DETECT_OUT)" ;;
+  [a-z0-9._-]*) pass "detect-agent: returns current normalized agent id ($DETECT_OUT)" ;;
   *) fail "detect-agent: unexpected output: $DETECT_OUT" ;;
 esac
 
@@ -307,12 +307,33 @@ else
   fail "detect-agent: unexpected output with override: $OUTPUT"
 fi
 
-OMARCHY_DEFAULT_AGENT=unsupported OUTPUT=$(OMARCHY_DEFAULT_AGENT=unsupported "$DETECT" 2>/dev/null) || true
-if [[ $OUTPUT == "none" ]]; then
-  pass "detect-agent: unsupported agent in env → none"
+for unsupported in opencode claude antigravity agy grok gemini copilot crush pi unknown-agent; do
+  OUTPUT=$(OMARCHY_DEFAULT_AGENT="$unsupported" "$DETECT" 2>/dev/null) || true
+  if [[ $OUTPUT == "$unsupported" ]]; then
+    pass "detect-agent: preserves unsupported $unsupported for UI rejection"
+  else
+    fail "detect-agent: unexpected output for $unsupported: $OUTPUT"
+  fi
+done
+
+if ! rg -q 'opencode|claude|antigravity|agy|grok' "$PLUGIN_DIR/scripts/scope-helper"; then
+  pass "helper: no non-Codex provider search branch remains"
 else
-  fail "detect-agent: unexpected output for unsupported agent: $OUTPUT"
+  fail "helper: non-Codex provider search branch remains"
 fi
+
+assert_exit_nonzero "helper: rejects OpenCode search dispatch" \
+  "$HELPER" search "$GOOD_ID" "$REAL_POINTS" "$REAL_POINTS" opencode
+
+assert_exit_nonzero "helper: rejects Claude search dispatch" \
+  "$HELPER" search "$GOOD_ID" "$REAL_POINTS" "$REAL_POINTS" claude
+assert_exit_nonzero "helper: rejects Antigravity search dispatch" \
+  "$HELPER" search "$GOOD_ID" "$REAL_POINTS" "$REAL_POINTS" antigravity
+assert_exit_nonzero "helper: rejects Grok search dispatch" \
+  "$HELPER" search "$GOOD_ID" "$REAL_POINTS" "$REAL_POINTS" grok
+
+assert_output_contains "ui: only Codex may start capture" 'root.detectedAgent !== "codex"' \
+  rg -n 'root.detectedAgent !== "codex"' "$PLUGIN_DIR/Scope.qml"
 
 echo ""
 
@@ -352,7 +373,9 @@ echo ""
 
 # ── section 8: permissions ─────────────────────────────────────────────────
 
-echo "§8 File permissions"
+echo "§8 File permissions
+
+"
 
 # Check script permissions
 HELPER_PERMS=$(stat -c '%a' "$HELPER")
@@ -376,6 +399,344 @@ fi
 echo ""
 
 # ── summary ────────────────────────────────────────────────────────────────
+# ── search handoff tests ───────────────────────────────────────────────────
+
+echo -e "
+§9 Search handoff"
+
+assert_exit_nonzero "search: no arguments" "$HELPER" search
+assert_exit_nonzero "search: too few arguments" "$HELPER" search "1234567890123456"
+
+if ! grep -q "xdg-open .*google.com" "$HELPER"; then
+  pass "search: no automatic browser opening for google.com"
+else
+  fail "search: still automatically opening google"
+fi
+
+if grep -q "codex exec.*tools.web_search.enabled=true" "$HELPER"; then
+  pass "search: explicitly uses codex web search tool"
+else
+  fail "search: missing tools.web_search.enabled=true"
+fi
+
+if grep -q "schema.*json" "$HELPER"; then
+  pass "search: uses structured JSON schema output"
+else
+  fail "search: does not use JSON schema output"
+fi
+
+echo ""
+echo "§10 Circle-to-Search UI and lifecycle"
+
+assert_output_contains "ui: lasso starts search immediately" "root.startInitialSearch()" \
+  rg -n "root.startInitialSearch" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "ui: initial intent is neutral" "Identify what is visible in this selected image" \
+  rg -n "Identify what is visible" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "ui: lasso capture uses protected search" "service.searchWeb(imagePath, root.pendingQuestion)" \
+  rg -n "service.searchWeb" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "ui: follow-up submits from result card" "followUpSubmitted" \
+  rg -n "followUpSubmitted" "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "ui: follow-up reuses captured image" "service.searchWeb(root.capturedImagePath, trimmed)" \
+  rg -n "service.searchWeb" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "ui: result stays inline" "scopeState === \"Result\"" \
+  rg -n 'scopeState === "Result"' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "lifecycle: Escape terminates Scope work" "service.cancelWork()" \
+  rg -n "service.cancelWork" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "lifecycle: helper owns a dedicated search process group" "setsid timeout" \
+  rg -n "setsid timeout" "$HELPER"
+assert_output_contains "lifecycle: stale response reader is generation guarded" "responseGeneration !== root.sessionGeneration" \
+  rg -n "responseGeneration !== root.sessionGeneration" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "sources: URLs are opened only on click" "onClicked: root.openWebUrl" \
+  rg -n "onClicked: root.openWebUrl" "$PLUGIN_DIR/components/ResultCard.qml"
+
+if rg -q "AskBubble|Ask Agent|Search Web" "$PLUGIN_DIR/Scope.qml" "$PLUGIN_DIR/ScopeOverlay.qml" "$PLUGIN_DIR/components/ResultCard.qml"; then
+  fail "ui: obsolete first-step Ask Agent/Search Web UI remains"
+else
+  pass "ui: no obsolete first-step Ask Agent/Search Web UI remains"
+fi
+
+if rg -q "google" "$PLUGIN_DIR/Scope.qml" "$PLUGIN_DIR/ScopeOverlay.qml" "$PLUGIN_DIR/ScopeService.qml" "$PLUGIN_DIR/components" "$HELPER"; then
+  fail "ui: Google-specific implementation remains"
+else
+  pass "ui: no Google-specific implementation"
+fi
+
+if rg -q "clipboard|wl-copy|xclip" "$PLUGIN_DIR/Scope.qml" "$PLUGIN_DIR/ScopeOverlay.qml" "$PLUGIN_DIR/ScopeService.qml" "$PLUGIN_DIR/components" "$HELPER"; then
+  fail "privacy: clipboard activity found"
+else
+  pass "privacy: no clipboard activity"
+fi
+
+# Verify cancellation scopes to the helper's owned search process group. This
+# uses a local fake codex and never touches a real configured Codex session.
+CANCEL_BIN=$(mktemp -d)
+CANCEL_ID=$(dd if=/dev/urandom bs=8 count=1 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+CANCEL_DIR="$RUNTIME_BASE/$CANCEL_ID"
+mkdir -p "$CANCEL_DIR"
+chmod 700 "$CANCEL_DIR"
+printf 'png' > "$CANCEL_DIR/capture.png"
+printf 'What is this?' > "$CANCEL_DIR/question.txt"
+chmod 600 "$CANCEL_DIR/capture.png" "$CANCEL_DIR/question.txt"
+cat > "$CANCEL_BIN/codex" <<'MOCK'
+#!/bin/bash
+sleep 60
+MOCK
+chmod 700 "$CANCEL_BIN/codex"
+
+PATH="$CANCEL_BIN:$PATH" "$HELPER" search "$CANCEL_ID" "$CANCEL_DIR/capture.png" "$CANCEL_DIR/question.txt" codex >/dev/null 2>&1 &
+CANCEL_HELPER_PID=$!
+sleep 0.3
+kill -TERM "$CANCEL_HELPER_PID" 2>/dev/null || true
+for _ in 1 2 3 4 5; do
+  if ! pgrep -f "$CANCEL_BIN/codex" >/dev/null 2>&1; then break; fi
+  sleep 0.2
+done
+if pgrep -f "$CANCEL_BIN/codex" >/dev/null 2>&1; then
+  fail "cancellation: Scope-owned Codex child leaked after helper termination"
+else
+  pass "cancellation: Scope-owned Codex child terminates immediately"
+fi
+wait "$CANCEL_HELPER_PID" 2>/dev/null || true
+rm -rf "$CANCEL_BIN" "$CANCEL_DIR"
+
+echo ""
+echo "§11 Open Agent handoff"
+
+assert_output_contains "open-agent: ResultCard emits signal" "root.openAgent()" \
+  rg -n "root.openAgent" "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "open-agent: overlay forwards signal" "panel.requestOpenAgent()" \
+  rg -n "panel.requestOpenAgent" "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "open-agent: root receives forwarded signal" "onRequestOpenAgent: root.escalateSession()" \
+  rg -n "onRequestOpenAgent" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "open-agent: root waits for successful handoff" "onEscalationSucceeded" \
+  rg -n "onEscalationSucceeded" "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "open-agent: successful handoff resets Scope centrally" "function completeEscalation" \
+  rg -n 'function completeEscalation' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "open-agent: successful handoff resets to Idle" "root.resetSession()" \
+  rg -n -A 4 'function completeEscalation' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "open-agent: successful handoff hides the overlay" "root.shell.hide(root.pluginId)" \
+  rg -n -A 5 'function completeEscalation' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "open-agent: launch failure preserves the result" "root.escalationPending = false" \
+  rg -n -A 4 'function onEscalationFailed' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "open-agent: helper uses dedicated private directory" "mktemp -d --tmpdir" \
+  rg -n "mktemp -d --tmpdir" "$HELPER"
+assert_output_contains "open-agent: uses Omarchy interactive launcher" "omarchy-launch-tui --app-id=org.omarchy.agent" \
+  rg -n "omarchy-launch-tui --app-id=org.omarchy.agent" "$HELPER"
+assert_output_contains "open-agent: Codex receives selected image" "-i \"\$esc_image\"" \
+  rg -n -- '-i "\$esc_image"' "$HELPER"
+assert_output_contains "open-agent: Codex starts from neutral cwd" "-C \"\$interactive_cwd\"" \
+  rg -n -- '-C "\$interactive_cwd"' "$HELPER"
+assert_output_contains "open-agent: bounded handoff cleanup" "sleep 60" \
+  rg -n "sleep 60" "$HELPER"
+
+if rg -q 'bash -c.*codex|eval.*codex|pkill.*codex|killall.*codex|trusted.*(dir|project)|trust.*(dir|project)' "$HELPER"; then
+  fail "open-agent: unsafe Codex launch or global kill found"
+else
+  pass "open-agent: no shell interpolation or global Codex kill"
+fi
+
+# Exercise preparation and launch with harmless local stand-ins. This confirms
+# that the image is copied privately while Codex receives a neutral workspace.
+ESC_BIN=$(mktemp -d)
+ESC_NEUTRAL=$(mktemp -d)
+ESC_ID=$(dd if=/dev/urandom bs=8 count=1 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+ESC_DIR="$RUNTIME_BASE/$ESC_ID"
+mkdir -p "$ESC_DIR"
+chmod 700 "$ESC_DIR"
+printf 'png' > "$ESC_DIR/capture.png"
+printf 'latest follow-up' > "$ESC_DIR/question.txt"
+chmod 600 "$ESC_DIR"/*
+cat > "$ESC_BIN/omarchy-default-agent" <<'MOCK'
+#!/bin/bash
+echo codex
+MOCK
+cat > "$ESC_BIN/codex" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+cat > "$ESC_BIN/omarchy-launch-tui" <<'MOCK'
+#!/bin/bash
+[[ ${SCOPE_ESCALATE_FAIL:-0} == 1 ]] && exit 1
+printf '%s\n' "$*" > "${SCOPE_ESCALATE_MARKER:?}"
+if [[ ${SCOPE_ESCALATE_HOLD:-0} == 1 ]]; then
+  printf '%s\n' "$$" > "${SCOPE_ESCALATE_PID_FILE:?}"
+  sleep 10
+fi
+exit 0
+MOCK
+chmod 700 "$ESC_BIN"/*
+ESC_MARKER="$ESC_DIR/launcher-args.txt"
+if ESC_OUT=$(HOME="$ESC_NEUTRAL" PATH="$ESC_BIN:$PATH" SCOPE_ESCALATE_MARKER="$ESC_MARKER" "$HELPER" escalate "$ESC_ID" "$ESC_DIR/capture.png" "$ESC_DIR/question.txt" codex 2>&1); then
+  if [[ $ESC_OUT == *OK* ]]; then pass "open-agent: launch preparation reports success"; else fail "open-agent: success did not report OK"; fi
+else
+  fail "open-agent: controlled launcher unexpectedly failed"
+fi
+ESC_HANDOFF=$(find "$RUNTIME_BASE" -maxdepth 1 -type d -name "esc_${ESC_ID}.*" -print -quit)
+if [[ -n $ESC_HANDOFF && -f $ESC_HANDOFF/capture.png ]]; then
+  pass "open-agent: selected image copied before cleanup"
+else
+  fail "open-agent: handoff image missing"
+fi
+if [[ -n $ESC_HANDOFF && $(stat -c '%a' "$ESC_HANDOFF") == 700 && $(stat -c '%a' "$ESC_HANDOFF/capture.png") == 600 ]]; then
+  pass "open-agent: handoff files are private"
+else
+  fail "open-agent: handoff permissions are not private"
+fi
+if [[ -f $ESC_MARKER && $(cat "$ESC_MARKER") == *"-i $ESC_HANDOFF/capture.png"* && $(cat "$ESC_MARKER") == *"-C $ESC_NEUTRAL"* && $(cat "$ESC_MARKER") != *"-C $ESC_HANDOFF"* ]]; then
+  pass "open-agent: launcher receives absolute image with neutral cwd"
+else
+  fail "open-agent: launcher did not receive absolute image and neutral cwd"
+fi
+if HOME="$ESC_NEUTRAL" PATH="$ESC_BIN:$PATH" SCOPE_ESCALATE_FAIL=1 SCOPE_ESCALATE_MARKER="$ESC_MARKER" "$HELPER" escalate "$ESC_ID" "$ESC_DIR/capture.png" "$ESC_DIR/question.txt" codex >/dev/null 2>&1; then
+  fail "open-agent: launcher failure was not reported"
+else
+  pass "open-agent: launcher failure returns non-zero"
+fi
+ESC_PID_FILE="$ESC_DIR/launcher.pid"
+ESC_START_NS=$(date +%s%N)
+if ESC_HOLD_OUT=$(HOME="$ESC_NEUTRAL" PATH="$ESC_BIN:$PATH" SCOPE_ESCALATE_HOLD=1 SCOPE_ESCALATE_PID_FILE="$ESC_PID_FILE" SCOPE_ESCALATE_MARKER="$ESC_MARKER" "$HELPER" escalate "$ESC_ID" "$ESC_DIR/capture.png" "$ESC_DIR/question.txt" codex 2>&1); then
+  ESC_END_NS=$(date +%s%N)
+  ESC_ELAPSED_MS=$(( (ESC_END_NS - ESC_START_NS) / 1000000 ))
+  ESC_LAUNCH_PID=$(cat "$ESC_PID_FILE" 2>/dev/null || true)
+  if [[ $ESC_HOLD_OUT == *OK* && $ESC_ELAPSED_MS -lt 1500 && -n $ESC_LAUNCH_PID ]] && kill -0 "$ESC_LAUNCH_PID" 2>/dev/null; then
+    pass "open-agent: helper acknowledges launch without waiting for interactive session"
+  else
+    fail "open-agent: helper waited for interactive launcher or lost its process"
+  fi
+  [[ -n $ESC_LAUNCH_PID ]] && kill -TERM "$ESC_LAUNCH_PID" 2>/dev/null || true
+else
+  fail "open-agent: detached controlled launcher unexpectedly failed"
+fi
+find "$RUNTIME_BASE" -maxdepth 1 -type d -name "esc_${ESC_ID}.*" -exec rm -rf -- {} +
+rm -rf "$ESC_BIN" "$ESC_NEUTRAL" "$ESC_DIR"
+
+echo ""
+echo "§12 Omarchy theme bindings"
+
+THEME_QML=(
+  "$PLUGIN_DIR/ScopeOverlay.qml"
+  "$PLUGIN_DIR/components/ResultCard.qml"
+  "$PLUGIN_DIR/components/LassoOverlay.qml"
+  "$PLUGIN_DIR/components/LoadingDots.qml"
+  "$PLUGIN_DIR/components/ErrorToast.qml"
+)
+
+if rg -n '#[0-9A-Fa-f]{3,8}|Qt\.rgba|rgba\(|"(white|black|red|blue)"|sans-serif' "${THEME_QML[@]}" >/dev/null; then
+  fail "theme: active Scope UI still contains a hardcoded palette"
+else
+  pass "theme: active Scope UI has no hardcoded palette or font family"
+fi
+
+for theme_file in "${THEME_QML[@]}"; do
+  if rg -q 'Color\.' "$theme_file" && rg -q 'Style\.' "$theme_file"; then
+    pass "theme: $(basename "$theme_file") uses live Color and Style bindings"
+  else
+    fail "theme: $(basename "$theme_file") is missing live Color or Style bindings"
+  fi
+done
+
+assert_output_contains "theme: result card uses gradient-capable popup border" "Border.surfaceSpec(\"popups\"" \
+  rg -n 'Border\.surfaceSpec' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "theme: error toast uses notification surface border" "Border.surfaceSpec(\"notifications\"" \
+  rg -n 'Border\.surfaceSpec' "$PLUGIN_DIR/components/ErrorToast.qml"
+assert_output_contains "theme: lasso uses image-picker selection role" "Color.imagePicker.selectedBorder" \
+  rg -n 'Color\.imagePicker' "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "theme: overlay uses system image-picker scrim" "Color.imagePicker.scrim" \
+  rg -n 'Color\.imagePicker.scrim' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "theme: follow-up input uses system control states" "Style.controlFill" \
+  rg -n 'Style\.controlFill' "$PLUGIN_DIR/components/ResultCard.qml"
+
+# The protected backend is intentionally outside this visual-only change.
+assert_output_contains "codex: protected web-search command remains present" "tools.web_search.enabled=true" \
+  rg -n 'tools\.web_search\.enabled=true' "$HELPER"
+
+echo ""
+echo "§13 Result links and sources"
+
+# The helper normalizes sources to one stable URL field before QML sees them;
+# invalid schemes never reach a clickable delegate.
+assert_output_contains "sources: normalizer reads the stable url field" "source.url" \
+  rg -n 'source\.url' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "sources: normalizer deduplicates URLs" "seen[url]" \
+  rg -n 'seen\[url\]' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "sources: missing title falls back safely" "Source " \
+  rg -n 'Source ' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "sources: chips include their returned title" "root.sourceTitle(modelData, index)" \
+  rg -n 'root\.sourceTitle\(modelData, index\)' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "sources: whole collapsed chip is interactive" "anchors.fill: parent" \
+  rg -n -U 'MouseArea \{\n\s+anchors\.fill: parent' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "sources: expanded sources use the same opener" "onClicked: root.openWebUrl(modelData.url)" \
+  rg -n 'onClicked: root\.openWebUrl\(modelData\.url\)' "$PLUGIN_DIR/components/ResultCard.qml"
+
+# Both presentation and launch boundaries accept only ordinary HTTP(S) URLs.
+assert_output_contains "links: QML validates HTTP(S) URLs at open boundary" "^https?" \
+  rg -n '\^https\?' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "links: source normalizer validates HTTP(S) URLs" "^https?" \
+  rg -n '\^https\?' "$PLUGIN_DIR/Scope.qml"
+if node - "$PLUGIN_DIR/components/ResultCard.qml" <<'NODE'
+const fs = require("fs");
+const source = fs.readFileSync(process.argv[2], "utf8");
+const match = source.match(/function safeWebUrl\(value\) \{([\s\S]*?)\n  \}\n\n  function sourceTitle/);
+if (!match) process.exit(2);
+const safeWebUrl = new Function("value", match[1]);
+const accepted = safeWebUrl("https://example.com/path?q=1") === "https://example.com/path?q=1";
+const rejected = ["file:///etc/passwd", "javascript:alert(1)", "data:text/plain,hi", "", null, "https:// bad.example"]
+  .every((value) => safeWebUrl(value) === "");
+process.exit(accepted && rejected ? 0 : 1);
+NODE
+then
+  pass "links: URL gate allows HTTPS and rejects file/javascript/data/malformed URLs"
+else
+  fail "links: URL gate did not reject an unsafe or malformed URL"
+fi
+
+assert_output_contains "links: browser uses a Process argument array" '["xdg-open", url]' \
+  rg -n '\["xdg-open", url\]' "$PLUGIN_DIR/components/ResultCard.qml"
+if rg -q 'execDetached|bash -c|sh -c|eval' "$PLUGIN_DIR/components/ResultCard.qml"; then
+  fail "links: unsafe browser launcher found"
+else
+  pass "links: browser opener has no shell interpolation"
+fi
+
+# Rich text is deliberately opt-in: model text is HTML-escaped first and only
+# safe Markdown links become anchors. Nothing opens except click activation.
+assert_output_contains "links: model answer is HTML escaped" "function escapeHtml" \
+  rg -n 'function escapeHtml' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "links: Markdown links are converted safely" "function safeAnswerMarkup" \
+  rg -n 'function safeAnswerMarkup' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "links: answer uses safe rich text" "textFormat: Text.RichText" \
+  rg -n 'textFormat: Text.RichText' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "links: inline links require explicit activation" "onLinkActivated: function(link)" \
+  rg -n 'onLinkActivated: function\(link\)' "$PLUGIN_DIR/components/ResultCard.qml"
+if node - "$PLUGIN_DIR/components/ResultCard.qml" <<'NODE'
+const fs = require("fs");
+const source = fs.readFileSync(process.argv[2], "utf8");
+function body(expression) {
+  const match = source.match(expression);
+  if (!match) throw new Error("missing expected ResultCard helper");
+  return match[1];
+}
+const safeWebUrl = new Function("value", body(/function safeWebUrl\(value\) \{([\s\S]*?)\n  \}\n\n  function sourceTitle/));
+const escapeHtml = new Function("value", body(/function escapeHtml\(value\) \{([\s\S]*?)\n  \}\n\n  function formatPlainMarkdown/));
+const formatPlainMarkdownRaw = new Function("value", "escapeHtml", body(/function formatPlainMarkdown\(value\) \{([\s\S]*?)\n  \}\n\n  \/\//));
+const formatPlainMarkdown = (value) => formatPlainMarkdownRaw(value, escapeHtml);
+const safeAnswerMarkup = new Function("value", "safeWebUrl", "escapeHtml", "formatPlainMarkdown", "Color", body(/function safeAnswerMarkup\(value\) \{([\s\S]*?)\n  \}\n\n  function openWebUrl/));
+const render = (value) => safeAnswerMarkup(value, safeWebUrl, escapeHtml, formatPlainMarkdown, { accent: "#123456" });
+const valid = render("[Zellum](https://zellum.example/item)");
+const hostile = render("<script>alert(1)</script> [bad](javascript:alert(1))");
+const passed = valid.includes('href="https://zellum.example/item"')
+  && valid.includes(">Zellum</a>")
+  && !valid.includes("[Zellum](")
+  && hostile.includes("&lt;script&gt;")
+  && !hostile.includes("javascript:")
+  && !hostile.includes("href=");
+process.exit(passed ? 0 : 1);
+NODE
+then
+  pass "links: valid Markdown becomes an anchor while HTML and unsafe links stay inert"
+else
+  fail "links: Markdown/HTML sanitizer did not keep untrusted answer content inert"
+fi
 
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 echo ""

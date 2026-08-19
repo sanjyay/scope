@@ -1,54 +1,10 @@
 #!/bin/bash
-# scope-detect-agent — detects the configured Omarchy default AI agent.
-#
-# Outputs one of: "codex", "claude", or "none"
-# Exit codes: 0 = found, 1 = none found/supported
-#
-# Detection priority:
-#   1. codex CLI present and appears configured
-#   2. claude CLI present and appears configured
-#
-# This does NOT invoke the agent — it only checks for CLI availability.
-# Agent-specific capability validation happens in scope-helper at analyze time.
-
+# Resolve exactly the configured Omarchy default agent. Never fall back.
+# This is deliberately run for every Scope invocation: the default agent is
+# dynamic Omarchy user state, not plugin-lifetime configuration.
 set -euo pipefail
-
-detect_codex() {
-  command -v codex >/dev/null 2>&1 || return 1
-  # Check that codex has some auth/config (codex doctor exits 0 when ok)
-  # We just check binary exists for now — actual auth is validated at use time
-  return 0
-}
-
-detect_claude() {
-  command -v claude >/dev/null 2>&1 || return 1
-  return 0
-}
-
-# Respect OMARCHY_DEFAULT_AGENT env var if set (allows user override)
-if [[ -n ${OMARCHY_DEFAULT_AGENT:-} ]]; then
-  case "$OMARCHY_DEFAULT_AGENT" in
-    codex)
-      detect_codex && { echo "codex"; exit 0; }
-      ;;
-    claude)
-      detect_claude && { echo "claude"; exit 0; }
-      ;;
-  esac
-  echo "none"
-  exit 1
-fi
-
-# Auto-detect in priority order
-if detect_codex; then
-  echo "codex"
-  exit 0
-fi
-
-if detect_claude; then
-  echo "claude"
-  exit 0
-fi
-
-echo "none"
-exit 1
+configured="${OMARCHY_DEFAULT_AGENT:-}"
+if [[ -z $configured ]] && command -v omarchy-default-agent >/dev/null 2>&1; then configured=$(omarchy-default-agent 2>/dev/null || true); fi
+configured=$(printf '%s' "$configured" | tr '[:upper:]' '[:lower:]' | xargs)
+[[ -n $configured ]] || { echo unknown; exit 1; }
+echo "$configured"

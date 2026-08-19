@@ -1,0 +1,17 @@
+# Editor and interpreter debris
+.DS_Store
+*.swp
+*~
+__pycache__/
+*.py[cod]
+
+# Local test and runtime output (the real Scope runtime lives in XDG_RUNTIME_DIR)
+/output.jsonl
+/weather.jsonl
+/prompt.txt
+/result.json
+/schema.json
+/raw_mask.png
+/tests/.tmp/
+*.log
+

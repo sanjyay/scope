@@ -2,10 +2,11 @@
 // Minimal, non-blocking. Dots pulse with staggered delays.
 
 import QtQuick
+import qs.Commons
 
 Row {
   id: root
-  spacing: 5
+  spacing: Style.spacing.sm
 
   Repeater {
     model: 3
@@ -13,10 +14,10 @@ Row {
     Rectangle {
       id: dot
       required property int index
-      width: 6
-      height: 6
-      radius: 3
-      color: Qt.rgba(0.78, 0.8, 0.8, 0.6)
+      width: Style.spacing.md
+      height: Style.spacing.md
+      radius: Math.min(Style.cornerRadius, width / 2)
+      color: Color.accent
 
       SequentialAnimation on opacity {
         running: root.visible

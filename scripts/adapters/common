@@ -1,0 +1,11 @@
+#!/bin/bash
+# Scope adapter contract. Search adapters return a normalized result file.
+
+scope_adapter_capabilities() {
+  local id="$1" bin="$2" protected=false vision=false search=false structured=false
+  command -v "$bin" >/dev/null 2>&1 || { printf '{"id":"%s","installed":false}\n' "$id"; return; }
+  case "$id" in
+    codex) protected=true; vision=true; search=true; structured=true ;;
+  esac
+  printf '{"id":"%s","installed":true,"vision":%s,"webSearch":%s,"protectedMode":%s,"structuredOutput":%s}\n' "$id" "$vision" "$search" "$protected" "$structured"
+}

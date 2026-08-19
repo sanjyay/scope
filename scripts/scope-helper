@@ -47,6 +47,9 @@ readonly TIMEOUT_AGENT=120
 readonly TTL_SECONDS=600   # 10 minutes
 
 RUNTIME_BASE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/scope"
+ADAPTER_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/adapters" && pwd)"
+source "$ADAPTER_DIR/common"
+source "$ADAPTER_DIR/codex"
 
 # ────────────────────────── helpers ───────────────────────────────────────────
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -92,6 +95,14 @@ cmd_init() {
 cmd_prune() {
   ensure_runtime_base
   prune_stale_quietly
+}
+
+cmd_capabilities() {
+  [[ $# -eq 1 ]] || die "capabilities: expected adapter id"
+  case "$1" in
+    codex) scope_adapter_capabilities codex codex ;;
+    *) printf '{"id":"%s","installed":false,"vision":false,"webSearch":false,"protectedMode":false,"structuredOutput":false}\n' "$1" ;;
+  esac
 }
 
 prune_stale_quietly() {
@@ -278,11 +289,7 @@ cmd_analyze() {
   # Validate invocation ID
   [[ $inv_id =~ ^[0-9a-f]{16}$ ]] || die "Invalid invocation ID"
 
-  # Validate adapter name (only known safe names)
-  case "$adapter" in
-    codex|claude) ;;
-    *) die "Unsupported adapter: $adapter" ;;
-  esac
+  [[ $adapter == "codex" ]] || die "Unsupported adapter: $adapter"
 
   # Validate image path is inside our runtime dir
   image_path=$(assert_safe_path "$image_path")
@@ -313,13 +320,33 @@ cmd_analyze() {
   chmod 600 "$response_file"
 
   # Invoke the adapter
-  case "$adapter" in
-    codex) invoke_codex "$image_path" "$question" "$response_file" "$inv_dir" ;;
-    claude) invoke_claude "$image_path" "$question" "$response_file" "$inv_dir" ;;
-  esac
+  invoke_codex "$image_path" "$question" "$response_file" "$inv_dir"
 
   echo "$response_file"
 }
+
+# ────────────────────── process management ─────────────────────────────────────
+_active_child_pid=""
+
+cleanup_child() {
+  if [[ -n "$_active_child_pid" ]]; then
+    if kill -0 "$_active_child_pid" 2>/dev/null; then
+      # Search is launched in its own session below. Kill only that Scope-owned
+      # process group, never a global `codex` process.
+      kill -TERM -- "-$_active_child_pid" 2>/dev/null || kill -TERM "$_active_child_pid" 2>/dev/null
+      # Bounded grace period (~300ms)
+      for i in {1..3}; do
+        kill -0 "$_active_child_pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      if kill -0 "$_active_child_pid" 2>/dev/null; then
+        kill -KILL -- "-$_active_child_pid" 2>/dev/null || kill -KILL "$_active_child_pid" 2>/dev/null
+      fi
+      wait "$_active_child_pid" 2>/dev/null || true
+    fi
+  fi
+}
+trap cleanup_child TERM INT EXIT
 
 # ────────────────────── security preamble ─────────────────────────────────────
 # Sent as the FIRST input to the agent (before user question and image).
@@ -390,7 +417,10 @@ invoke_codex() {
       -i "$image_path" \
       -o "$response_file" \
       - < "$prompt_file" \
-    >/dev/null 2>&1 || exit_code=$?
+    >/dev/null 2>&1 &
+  _active_child_pid=$!
+  wait "$_active_child_pid" || exit_code=$?
+  _active_child_pid=""
 
   rm -f "$prompt_file"
 
@@ -405,104 +435,185 @@ invoke_codex() {
   fi
 }
 
-# ────────────────────── claude adapter ───────────────────────────────────────
-invoke_claude() {
+# ────────────────────── codex search adapter ─────────────────────────────────
+invoke_codex_search() {
   local image_path="$1"
   local question="$2"
   local response_file="$3"
   local inv_dir="$4"
 
-  command -v claude >/dev/null 2>&1 || {
-    echo "Claude Code is not installed or not in PATH." > "$response_file"
+  command -v codex >/dev/null 2>&1 || {
+    echo "Codex CLI is not installed or not in PATH." > "$response_file"
     return
   }
 
-  # Build the full prompt (security preamble + user question)
   local prompt_file
   prompt_file=$(mktemp --tmpdir="$inv_dir" prompt.XXXXXX.txt)
   chmod 600 "$prompt_file"
-  printf '%s\n\n---\nUSER QUESTION:\n%s\n' \
-    "$SECURITY_PREAMBLE" \
-    "$question" > "$prompt_file"
 
-  # We need to attach the image. Claude Code's --print mode accepts text
-  # prompts from stdin. Images must be embedded in the prompt using
-  # stream-json input format with a tool_result/image block, or passed as
-  # file paths in the prompt text.
-  #
-  # For claude --print, we use stream-json input to attach the image properly.
-  # Build a single stream-json user message with the image and text.
-  local prompt_json_file
-  prompt_json_file=$(mktemp --tmpdir="$inv_dir" prompt.XXXXXX.json)
-  chmod 600 "$prompt_json_file"
+  # The exact prompt requested:
+  local search_instruction="Identify what is visible in the selected image and search the web for useful, reliable information about it. Give a concise answer and cite the sources you used."
+  local user_question="$search_instruction"
+  if [[ -n "$question" ]]; then
+    user_question="$question"
+  fi
 
-  # Encode image as base64 for stream-json message
-  local image_b64
-  image_b64=$(base64 -w0 < "$image_path")
+  printf '%s
 
-  # Build the stream-json message per claude's stream-json input spec:
-  # {"type":"user","message":{"role":"user","content":[{"type":"image",...},{"type":"text",...}]}}
-  jq -cn \
-    --arg preamble "$SECURITY_PREAMBLE" \
-    --arg question "$question" \
-    --arg image_b64 "$image_b64" \
-    '{
-      type: "user",
-      message: {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/png",
-              data: $image_b64
-            }
-          },
-          {
-            type: "text",
-            text: ($preamble + "\n\n---\nUSER QUESTION:\n" + $question)
-          }
-        ]
+---
+USER QUESTION:
+%s
+'     "$SECURITY_PREAMBLE"     "$user_question" > "$prompt_file"
+
+  local schema_file
+  schema_file=$(mktemp --tmpdir="$inv_dir" schema.XXXXXX.json)
+  chmod 600 "$schema_file"
+  cat << 'SCHEMA' > "$schema_file"
+{
+  "type": "object",
+  "properties": {
+    "answer": { "type": "string", "description": "Concise answer (2-4 sentences)" },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "url": { "type": "string" }
+        },
+        "required": ["title", "url"],
+        "additionalProperties": false
       }
-    }' > "$prompt_json_file"
-
-  # Invoke claude with:
-  #   --print             : non-interactive, print response and exit
-  #   --input-format stream-json : accept stream-json on stdin (supports images)
-  #   --output-format text: plain text output to stdout
-  #   --no-session-persistence : don't save to disk
-  #   --allowedTools ""   : deny all tools (analysis only, no Bash/Edit/Write)
-  #   --disallowedTools "Bash,Edit,Write,MultiEdit,NotebookEdit": explicit deny
-  #   --permission-mode plan : read-only plan mode — no execution
-  #   --bare              : minimal mode, skip hooks/LSP/plugins/auto-memory
+    }
+  },
+  "required": ["answer", "sources"],
+  "additionalProperties": false
+}
+SCHEMA
 
   local exit_code=0
-  timeout "$TIMEOUT_AGENT" \
-    claude \
-      --print \
-      --input-format stream-json \
-      --output-format text \
-      --no-session-persistence \
-      --allowedTools "" \
-      --disallowedTools "Bash,Edit,MultiEdit,Write,NotebookEdit,WebFetch,WebSearch,computer_20250124,computer_20241022" \
-      --permission-mode plan \
-      --bare \
-      < "$prompt_json_file" \
-      > "$response_file" 2>/dev/null \
-    || exit_code=$?
+  # `setsid` gives this Scope-owned search a private process group, allowing
+  # Escape to stop Codex and its helper without affecting other Codex sessions.
+  setsid timeout "$TIMEOUT_AGENT" codex exec -c tools.web_search.enabled=true --output-schema "$schema_file" --ephemeral --sandbox read-only --ignore-user-config --ignore-rules --skip-git-repo-check -C "$inv_dir" -i "$image_path" -o "$response_file" - < "$prompt_file" >/dev/null 2>&1 &
+  _active_child_pid=$!
+  wait "$_active_child_pid" || exit_code=$?
+  _active_child_pid=""
 
-  rm -f "$prompt_file" "$prompt_json_file"
+  rm -f "$prompt_file" "$schema_file"
 
   if (( exit_code == 124 )); then
-    echo "Analysis timed out. The agent did not respond in time." > "$response_file"
+    echo '{"answer":"Search timed out.","sources":[]}' > "$response_file"
   elif [[ ! -s $response_file ]]; then
     if (( exit_code != 0 )); then
-      echo "Analysis failed (claude exited $exit_code). Check that Claude Code is configured and authenticated." > "$response_file"
+      echo '{"answer":"Codex web search failed (exit '$exit_code').","sources":[]}' > "$response_file"
     else
-      echo "No response from agent." > "$response_file"
+      echo '{"answer":"No response from agent.","sources":[]}' > "$response_file"
     fi
   fi
+}
+
+cmd_search() {
+  [[ $# -eq 4 ]] || die "search: expected 4 args, got $#"
+
+  local inv_id="$1"
+  local image_path="$2"
+  local question_file="$3"
+  local adapter="$4"
+
+  [[ $inv_id =~ ^[0-9a-f]{16}$ ]] || die "Invalid invocation ID"
+
+  [[ $adapter == "codex" ]] || die "Unsupported adapter for search: $adapter"
+
+  image_path=$(assert_safe_path "$image_path")
+  [[ -f $image_path ]] || die "Image not found: $image_path"
+
+  question_file=$(assert_safe_path "$question_file")
+  local question=""
+  [[ -f $question_file ]] && question=$(cat "$question_file")
+
+  local inv_dir="$RUNTIME_BASE/$inv_id"
+  local response_file="$inv_dir/response.txt"
+  rm -f "$response_file"
+
+  scope_adapter_codex_search "$image_path" "$question" "$response_file" "$inv_dir"
+  echo "$response_file"
+}
+
+cmd_escalate() {
+  [[ $# -eq 4 ]] || die "escalate: expected 4 args"
+  local inv_id="$1"
+  local image_path="$2"
+  local question_file="$3"
+  local adapter="$4"
+
+  [[ $inv_id =~ ^[0-9a-f]{16}$ ]] || die "Invalid invocation ID"
+
+  local inv_dir="$RUNTIME_BASE/$inv_id"
+  assert_safe_path "$inv_dir" >/dev/null
+
+  image_path=$(assert_safe_path "$image_path")
+  question_file=$(assert_safe_path "$question_file")
+
+  local esc_dir="$RUNTIME_BASE/esc_${inv_id}"
+  # This dedicated handoff directory outlives the original Scope session for a
+  # short bounded period. It is deliberately not a child of the session that
+  # Scope will clean up after a successful launch.
+  esc_dir=$(mktemp -d --tmpdir="$RUNTIME_BASE" "esc_${inv_id}.XXXXXX")
+  chmod 700 "$esc_dir"
+  local esc_image="$esc_dir/capture.png"
+
+  [[ -f "$image_path" ]] || die "Selected image is no longer available"
+  cp -- "$image_path" "$esc_image"
+  chmod 600 "$esc_image"
+
+  [[ $adapter == "codex" ]] || die "Couldn't open Codex"
+  [[ $(omarchy-default-agent) == "codex" ]] || die "Couldn't open Codex"
+  command -v omarchy-launch-tui >/dev/null 2>&1 || die "Couldn't open Codex"
+  command -v codex >/dev/null 2>&1 || die "Couldn't open Codex"
+
+  # Follow Omarchy's normal interactive launch convention. Its launcher uses
+  # $HOME/Work when available (to avoid treating HOME as a project); otherwise
+  # HOME is the stable neutral directory. The private Scope handoff directory
+  # is data transport only and must never become Codex's workspace.
+  local interactive_cwd="${HOME:-}"
+  [[ $interactive_cwd == /* && -d $interactive_cwd ]] || die "Couldn't open Codex"
+  if [[ -d "$interactive_cwd/Work" ]]; then
+    interactive_cwd="$interactive_cwd/Work"
+  fi
+
+  # Match Omarchy's normal interactive Codex launcher: same dedicated app-id
+  # and interactive approval behavior. Codex 0.148 supports -i for an
+  # absolute image path. Its interactive CLI has no private stdin/context-file
+  # handoff, so keep the initial prompt fixed rather than exposing result text
+  # or runtime paths in argv. The attached image is the useful visual context.
+  # The interactive terminal is explicitly user-owned after this point. Launch
+  # it detached from Scope's helper and close its stdio so Quickshell receives
+  # the success acknowledgement now, rather than after Codex eventually exits.
+  # A short probe still catches launcher failures before Scope clears its card.
+  omarchy-launch-tui --app-id=org.omarchy.agent \
+    codex --dangerously-bypass-approvals-and-sandbox \
+    -C "$interactive_cwd" \
+    -i "$esc_image" \
+    "This session was opened from Scope. The selected image is attached. Continue interactively with the user." \
+    </dev/null >/dev/null 2>&1 &
+  local launcher_pid=$!
+  sleep 0.1
+  if ! kill -0 "$launcher_pid" 2>/dev/null; then
+    if ! wait "$launcher_pid"; then
+      rm -rf -- "$esc_dir"
+      die "Couldn't open Codex"
+    fi
+  fi
+  disown "$launcher_pid" 2>/dev/null || true
+
+  # The terminal launcher can return before Codex has consumed -i. Keep the
+  # private handoff data for one minute, then reap it without touching Codex.
+  ( sleep 60; rm -rf -- "$esc_dir" ) >/dev/null 2>&1 &
+  disown
+  # This is the start acknowledgement consumed by ScopeService. It is emitted
+  # only after the launcher was successfully spawned; it never waits for the
+  # interactive Codex process to exit.
+  echo "OK"
 }
 
 cmd_cleanup() {
@@ -525,7 +636,7 @@ cmd_cleanup() {
 }
 
 # ────────────────────────── dispatch ──────────────────────────────────────────
-[[ $# -ge 1 ]] || die "Usage: scope-helper <init|capture|analyze|cleanup|prune>"
+[[ $# -ge 1 ]] || die "Usage: scope-helper <init|capture|analyze|search|cleanup|prune>"
 
 cmd="$1"
 shift
@@ -534,8 +645,11 @@ case "$cmd" in
   init)    cmd_init ;;
   capture) cmd_capture "$@" ;;
   analyze) cmd_analyze "$@" ;;
+  search) cmd_search "$@" ;;
+  escalate) cmd_escalate "$@" ;;
   cleanup) cmd_cleanup "$@" ;;
   prune)   cmd_prune ;;
+  capabilities) cmd_capabilities "$@" ;;
   version) echo "scope-helper $SCOPE_VERSION" ;;
   *)       die "Unknown command: $cmd" ;;
 esac

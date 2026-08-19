@@ -14,6 +14,7 @@
 //                               (used for lasso masking)
 
 import QtQuick
+import qs.Commons
 
 Item {
   id: root
@@ -24,6 +25,7 @@ Item {
 
   signal complete(var points, var bbox)
   signal cancelled()
+  onEnabledChanged: { if (!enabled) { root.drawing = false; root.hasSelection = false; root.rawPoints = []; root.closedPoints = []; lassoCanvas.requestPaint(); } }
 
   // ── internal state ────────────────────────────────────────────────────────
 
@@ -36,6 +38,10 @@ Item {
   // This limits the array size without visually affecting the lasso shape.
   property real lastSampledX: 0
   property real lastSampledY: 0
+  property real minX: 0
+  property real minY: 0
+  property real maxX: 0
+  property real maxY: 0
   readonly property real sampleThreshold: 2.5
 
   // ── mouse input ───────────────────────────────────────────────────────────
@@ -60,6 +66,8 @@ Item {
       root.hasSelection = false
       root.closedPoints = []
       root.rawPoints = [{ x: mouse.x, y: mouse.y }]
+      root.minX = root.maxX = mouse.x
+      root.minY = root.maxY = mouse.y
       root.lastSampledX = mouse.x
       root.lastSampledY = mouse.y
       lassoCanvas.requestPaint()
@@ -72,13 +80,15 @@ Item {
       var dy = mouse.y - root.lastSampledY
       if (dx * dx + dy * dy < root.sampleThreshold * root.sampleThreshold) return
 
-      // Append point (create new array to trigger QML binding refresh)
-      var pts = root.rawPoints.slice()
-      pts.push({ x: mouse.x, y: mouse.y })
-      root.rawPoints = pts
+      // Keep the capture path mutable; never clone an ever-growing array.
+      root.rawPoints.push({ x: mouse.x, y: mouse.y })
+      root.minX = Math.min(root.minX, mouse.x); root.maxX = Math.max(root.maxX, mouse.x)
+      root.minY = Math.min(root.minY, mouse.y); root.maxY = Math.max(root.maxY, mouse.y)
       root.lastSampledX = mouse.x
       root.lastSampledY = mouse.y
-      lassoCanvas.requestPaint()
+      // Coalesce to one frame, never debounce: restarting this timer for every
+      // pointer event postpones paint until the pointer stops moving.
+      if (!repaintTimer.running) repaintTimer.start()
     }
 
     onReleased: function(mouse) {
@@ -99,14 +109,8 @@ Item {
       lassoCanvas.requestPaint()
 
       // Calculate bounding box (window-relative)
-      var minX = pts[0].x, maxX = pts[0].x
-      var minY = pts[0].y, maxY = pts[0].y
-      for (var i = 1; i < pts.length; i++) {
-        if (pts[i].x < minX) minX = pts[i].x
-        if (pts[i].x > maxX) maxX = pts[i].x
-        if (pts[i].y < minY) minY = pts[i].y
-        if (pts[i].y > maxY) maxY = pts[i].y
-      }
+      var minX = root.minX, maxX = root.maxX
+      var minY = root.minY, maxY = root.maxY
 
       // Screen-absolute points
       var absPoints = pts.map(function(p) {
@@ -130,6 +134,8 @@ Item {
     }
   }
 
+  Timer { id: repaintTimer; interval: 16; repeat: false; onTriggered: lassoCanvas.requestPaint() }
+
   // ── canvas renderer ───────────────────────────────────────────────────────
 
   Canvas {
@@ -152,8 +158,10 @@ Item {
       ctx.moveTo(pts[0].x, pts[0].y)
       for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
       ctx.closePath()
-      ctx.fillStyle = "rgba(255, 255, 255, 0.06)"
+      ctx.fillStyle = Color.accent
+      ctx.globalAlpha = 0.10
       ctx.fill()
+      ctx.globalAlpha = 1
 
       // ── outer glow stroke ──────────────────────────────────────────────
       ctx.beginPath()
@@ -161,8 +169,8 @@ Item {
       for (var j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y)
       if (!root.drawing) ctx.closePath()
 
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.18)"
-      ctx.lineWidth = 6
+      ctx.strokeStyle = Color.imagePicker.unselectedBorder
+      ctx.lineWidth = Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.20))
       ctx.lineJoin = "round"
       ctx.lineCap = "round"
       ctx.stroke()
@@ -173,7 +181,7 @@ Item {
       for (var k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y)
       if (!root.drawing) ctx.closePath()
 
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.88)"
+      ctx.strokeStyle = Color.imagePicker.selectedBorder
       ctx.lineWidth = 1.75
       ctx.lineJoin = "round"
       ctx.lineCap = "round"
@@ -182,7 +190,7 @@ Item {
       // ── start-point dot ────────────────────────────────────────────────
       ctx.beginPath()
       ctx.arc(pts[0].x, pts[0].y, 5, 0, Math.PI * 2)
-      ctx.fillStyle = "rgba(255, 255, 255, 0.95)"
+      ctx.fillStyle = Color.imagePicker.selectedBorder
       ctx.fill()
 
       // ── closing hint: proximity ring near start when drawing ───────────
@@ -196,9 +204,11 @@ Item {
           var alpha = 0.3 + 0.5 * (1 - dist / 40)
           ctx.beginPath()
           ctx.arc(pts[0].x, pts[0].y, 12, 0, Math.PI * 2)
-          ctx.strokeStyle = "rgba(255, 255, 255, " + alpha + ")"
-          ctx.lineWidth = 1.5
+          ctx.strokeStyle = Color.imagePicker.selectedBorder
+          ctx.globalAlpha = alpha
+          ctx.lineWidth = Math.max(Style.spacing.hairline, Style.space(2))
           ctx.stroke()
+          ctx.globalAlpha = 1
         }
       }
 

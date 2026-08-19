@@ -1,11 +1,11 @@
-// ScopeService — secure process runner for capture and analysis.
+// ScopeService — secure process runner for capture and Scope Search.
 //
 // Manages the 5-step pipeline:
 //   1. Generate random invocation ID
 //   2. Create invocation directory (mkdir -p, 0700)
 //   3. Write lasso points file (from QML properties, no shell interpolation)
 //   4. Invoke scope-helper capture (grim + lasso mask)
-//   5. Invoke scope-helper analyze (agent adapter)
+//   5. Invoke scope-helper search (protected agent adapter)
 //
 // All subprocess invocations use structured argument arrays.
 // No user content is ever interpolated into shell strings.
@@ -37,25 +37,110 @@ Item {
   signal analysisSucceeded(string responsePath)
   signal analysisFailed(string message)
   signal invocationIdReady(string id)
+  signal escalationSucceeded()
+  signal escalationFailed(string message)
 
   // ── pipeline state ────────────────────────────────────────────────────────
   property string currentInvId: ""
   property string pendingQuestion: ""
   property string pendingImagePath: ""
+  property string targetAction: "web_search"
+  property int activeGeneration: 0
+  property bool workCancelled: false
 
   // ────────────────────────────────────────────────────────────────────────────
   // Public API
   // ────────────────────────────────────────────────────────────────────────────
 
   function startCapture(question) {
+    root.workCancelled = false
     root.pendingQuestion = question
     root.currentInvId = ""
     idGenProc.running = true
   }
 
-  function startAnalysis(imagePath) {
+  function escalate(invId, imagePath) {
+    if (!invId || !/^[0-9a-f]{16}$/.test(invId)) {
+      root.escalationFailed("Couldn't open Codex.")
+      return
+    }
+    var qPath = root.runtimeBase + "/" + invId + "/question.txt"
+    var p = escalateProcComp.createObject(root, {
+      command: [
+        root.helperScript, "escalate",
+        invId,
+        imagePath,
+        qPath,
+        root.detectedAgent
+      ]
+    })
+    if (p) p.running = true
+    else root.escalationFailed("Couldn't open Codex.")
+  }
+
+  Component {
+    id: escalateProcComp
+    Process {
+      id: escalateProc
+      running: false
+      property bool reported: false
+      stdout: StdioCollector {
+        waitForEnd: true
+        onStreamFinished: {
+          if (text.trim() === "OK") {
+            root.escalationSucceeded()
+          } else {
+            root.escalationFailed("Couldn't open Codex.")
+          }
+          escalateProc.reported = true
+        }
+      }
+      onExited: function(code) {
+        if (!reported && code !== 0) root.escalationFailed("Couldn't open Codex.")
+        this.destroy()
+      }
+    }
+  }
+
+  function searchWeb(imagePath, question) {
+    root.workCancelled = false
     root.pendingImagePath = imagePath
-    root.writeQuestionAndAnalyze()
+    var qPath = root.runtimeBase + "/" + root.currentInvId + "/question.txt"
+    questionWriterProc.targetPath = qPath
+    root.targetAction = "web_search"
+    questionWriterProc.textData = question; questionWriterProc.running = true
+  }
+
+  function runSearch() {
+    var qPath = root.runtimeBase + "/" + root.currentInvId + "/question.txt"
+
+    if (root.detectedAgent !== "codex") {
+      root.analysisFailed("Scope currently supports Codex only.")
+      return
+    }
+
+    analyzeProc.command = [
+      root.helperScript, "search",
+      root.currentInvId,
+      root.pendingImagePath,
+      qPath,
+      root.detectedAgent
+    ]
+    analyzeProc.running = true
+  }
+
+  function cancelWork() {
+    // Terminating the helper immediately triggers its scoped child/process-group
+    // cleanup. Never use a global codex kill: other user sessions are unrelated.
+    root.workCancelled = true
+    // Quickshell's Process cancellation API is `running = false`; it sends
+    // SIGTERM to this Scope-owned helper, whose trap handles its child group.
+    if (idGenProc.running) idGenProc.running = false
+    if (mkdirProc.running) mkdirProc.running = false
+    if (pointsWriterProc.running) pointsWriterProc.running = false
+    if (questionWriterProc.running) questionWriterProc.running = false
+    if (captureProc.running) captureProc.running = false
+    if (analyzeProc.running) analyzeProc.running = false
   }
 
   function cleanupInvocation(invId) {
@@ -80,6 +165,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         var id = text.trim()
         if (!/^[0-9a-f]{16}$/.test(id)) {
           root.captureFailed("Failed to generate invocation ID.")
@@ -93,10 +179,12 @@ Item {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         if (text.trim()) console.warn("scope/idgen stderr:", text.trim())
       }
     }
     onExited: function(code) {
+      if (root.workCancelled) return
       if (code !== 0 && root.currentInvId === "")
         root.captureFailed("ID generation failed (exit " + code + ").")
     }
@@ -126,6 +214,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         if (text.trim() !== "ok") {
           root.captureFailed("Failed to create invocation directory.")
           return
@@ -136,10 +225,12 @@ Item {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         if (text.trim()) console.warn("scope/mkdir stderr:", text.trim())
       }
     }
     onExited: function(code) {
+      if (root.workCancelled) return
       if (code !== 0 && mkdirProc.stdout.text.trim() !== "ok")
         root.captureFailed("mkdir failed (exit " + code + ").")
     }
@@ -165,22 +256,22 @@ Item {
     }
     var pointsData = parts.join(" ")
 
-    pointsWriter.path = pPath
-    pointsWriter.setText(pointsData)
+    pointsWriterProc.targetPath = pPath
+    pointsWriterProc.textData = pointsData; pointsWriterProc.running = true
   }
 
-  FileView {
-    id: pointsWriter
-    path: ""
-    watchChanges: false
-    atomicWrites: false
-    printErrors: true
-
-    onWritten: root.runCapture()
-    onWriteFailed: function(error) {
-      root.captureFailed("Failed to write points file: " + error)
-    }
+  Process {
+    id: pointsWriterProc
+    running: false
+    property string textData: ""
+    property string targetPath: ""
+    command: ["bash", "-c", 'cat << "EOF" > "$1"
+' + textData + '
+EOF
+', "bash", targetPath]
+    onExited: { if (!root.workCancelled) root.runCapture() }
   }
+
 
   // ────────────────────────────────────────────────────────────────────────────
   // Step 4: Run scope-helper capture
@@ -206,6 +297,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         var path = text.trim()
         if (!path) return  // Exit handler will report error
         if (path.startsWith("ERROR:")) {
@@ -223,10 +315,12 @@ Item {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         if (text.trim()) console.warn("scope/capture stderr:", text.trim())
       }
     }
     onExited: function(code) {
+      if (root.workCancelled) return
       if (code !== 0) {
         var out = captureProc.stdout ? captureProc.stdout.text.trim() : ""
         if (!out || out.startsWith("ERROR:")) {
@@ -236,50 +330,17 @@ Item {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Step 5a: Write question to private temp file
-  // ────────────────────────────────────────────────────────────────────────────
-
-  function writeQuestionAndAnalyze() {
-    var qPath = root.runtimeBase + "/" + root.currentInvId + "/question.txt"
-    questionWriter.path = qPath
-    questionWriter.setText(root.pendingQuestion)
-  }
-
-  FileView {
-    id: questionWriter
-    path: ""
-    watchChanges: false
-    atomicWrites: false
-    printErrors: true
-
-    onWritten: root.runAnalysis()
-    onWriteFailed: function(error) {
-      root.analysisFailed("Failed to write question file: " + error)
+  Process {
+    id: questionWriterProc
+    running: false
+    property string textData: ""
+    property string targetPath: ""
+    command: ["bash", "-c", 'printf "%s" "$1" > "$2"', "--", textData, targetPath]
+    onExited: {
+      if (!root.workCancelled && root.targetAction === "web_search") root.runSearch()
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Step 5b: Run scope-helper analyze
-  // ────────────────────────────────────────────────────────────────────────────
-
-  function runAnalysis() {
-    var qPath = root.runtimeBase + "/" + root.currentInvId + "/question.txt"
-
-    if (!root.detectedAgent || root.detectedAgent === "none") {
-      root.analysisFailed("No supported AI agent is configured. Install Codex or Claude Code.")
-      return
-    }
-
-    analyzeProc.command = [
-      root.helperScript, "analyze",
-      root.currentInvId,
-      root.pendingImagePath,
-      qPath,
-      root.detectedAgent
-    ]
-    analyzeProc.running = true
-  }
 
   Process {
     id: analyzeProc
@@ -288,6 +349,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         var path = text.trim()
         if (!path) return  // Exit handler will report
         if (path.startsWith("ERROR:")) {
@@ -304,10 +366,12 @@ Item {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        if (root.workCancelled) return
         if (text.trim()) console.warn("scope/analyze stderr:", text.trim())
       }
     }
     onExited: function(code) {
+      if (root.workCancelled) return
       if (code !== 0) {
         var out = analyzeProc.stdout ? analyzeProc.stdout.text.trim() : ""
         if (!out || out.startsWith("ERROR:")) {
