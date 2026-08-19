@@ -44,10 +44,10 @@ cd scope/
 ./install.sh
 ```
 
-Then reload the Omarchy shell:
+Then enable the plugin in the Omarchy shell:
 
 ```bash
-omarchy-shell shell reload
+omarchy-shell shell enablePlugin goblin.scope '{}'
 ```
 
 ### Prerequisites

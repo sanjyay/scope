@@ -64,14 +64,18 @@ do_install() {
   # Add keybinding (if it doesn't already exist)
   install_keybinding
 
+  # Attempt to enable the plugin immediately
+  if command -v omarchy-shell >/dev/null 2>&1; then
+    if omarchy-shell -q shell enablePlugin "$PLUGIN_ID" '{}'; then
+      info "Plugin activated in running shell"
+    fi
+  fi
+
   step "Installation complete!"
   echo ""
   echo "  Shortcut: $DEFAULT_SHORTCUT"
   echo ""
-  echo "  Reload the Omarchy shell to activate:"
-  echo "    omarchy-shell shell reload"
-  echo ""
-  echo "  Or log out and log back in."
+  echo "  If the shortcut doesn't work immediately, log out and log back in."
   echo ""
   echo "  See README.md and SECURITY.md for full documentation."
 }
