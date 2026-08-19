@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "goblin.scope",
+  "name": "Scope",
+  "version": "1.0.0",
+  "author": "goblin",
+  "license": "MIT",
+  "description": "Circle anything on screen and ask your configured AI agent about it. Freehand lasso selection with protected analysis-only agent invocation.",
+  "kinds": ["overlay", "service"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Scope.qml"
+  }
+}
