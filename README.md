@@ -1,171 +1,190 @@
 # Scope
 
-Scope is a visual context tool for Omarchy. Select anything on your screen and get a web-grounded explanation, solution, or research result from Codex—then hand it directly to the agent when you need to go deeper.
-Press `SUPER + SHIFT + Q`, draw around anything on your screen, and Scope captures only the selected region, uses Codex to analyze it, searches the web when useful, and shows a concise answer with sources directly on your desktop.
+**Select it. Understand it. Solve it.**
 
+Scope is a visual context tool for Omarchy. Select anything on your screen and
+get a web-grounded explanation, solution, or research result from Codex—then
+hand that context directly to the agent when you need to go deeper.
 
-<!-- DEMO: Replace this section with the final Scope demo GIF/video before submission. -->
-<!-- SCREENSHOT: Add Scope lasso-selection screenshot here. -->
-<!-- SCREENSHOT: Add inline result card with sources here. -->
+```text
+see something
+    → select it
+    → get an answer
+```
+
+The interaction is inspired by the convenience of Circle-to-Search, but Scope
+is built as a native Omarchy workflow around the desktop, Quickshell, and your
+configured Codex agent.
+
+<!-- DEMO: Add the final Scope demo GIF/video here. -->
+<!-- SCREENSHOT: Add a Scope lasso/result screenshot here. -->
+
+## Why Scope
+
+Without Scope, visual research often means:
+
+```text
+see something
+    → screenshot
+    → save or copy
+    → open a browser or AI tool
+    → upload
+    → explain what to inspect
+    → search
+```
+
+With Scope, the workflow is simply:
+
+```text
+see something
+    → select it
+    → get an answer
+```
+
+Scope is useful when the thing you need to understand is visible, but not
+easily selectable or worth turning into a separate screenshot file.
 
 ## What it does
 
-- Freehand lasso selection with selected-region-only capture.
-- Protected Codex visual search with web access enabled.
-- Concise result card with inline answer text and clickable sources.
-- Markdown links in answers are rendered as clickable links when safe.
-- Follow-up questions reuse the same selected image for another protected search.
-- Open Agent hands the selected image and concise context to interactive Codex.
-- Escape cancels the active Scope session and returns the overlay to an idle, reusable state.
-- Scope follows the active Omarchy theme through the shell's `Color` and `Style` tokens.
-- Temporary files live in private runtime storage and are cleaned automatically.
-
-## Why Scope exists
-
-Without Scope, the workflow usually looks like this:
-
-`see something -> screenshot -> save or copy -> open a browser or AI tool -> upload -> explain what to inspect -> search`
-
-Scope removes that friction:
-
-`see something -> circle it -> get an answer`
-
-The goal is to make anything visible on the desktop immediately searchable without manually taking a screenshot, saving it, opening a browser, or explaining which part of the screen you mean.
+1. Open Scope from the Omarchy bar or the optional keyboard shortcut.
+2. Draw a freehand lasso around the screen region you want to inspect.
+3. Scope captures only that region and masks the rest.
+4. Protected Codex Search analyzes the image and searches the web when useful.
+5. Scope shows a concise answer and sources inline.
+6. Ask a follow-up using the same selected image, or choose **Open Agent** for
+   an interactive Codex session with the visual context.
 
 ## Use cases
 
-Scope is useful for:
+### Errors and debugging
 
-- terminal errors and stack traces
-- application errors and warnings
-- unfamiliar UI elements and icons
-- products and objects
-- charts and diagrams
-- screenshots, remote desktops, and video frames
-- text that is hard to copy
-- quick web-grounded research from a visual context
+Circle a terminal error, stack trace, package/build failure, Python traceback,
+QML error, browser error, GUI warning, or configuration problem. Scope can
+explain what is visible and find relevant documentation or sources.
 
-Scope is not designed for face recognition or other identification of real people from images.
+Scope is not an application crash or coredump replacement; Omarchy already has
+native tooling for that. Its advantage is working on anything visible, even
+when no crash report exists.
 
-## How it works
+### Visual UI and context
 
-1. Press `SUPER + SHIFT + Q`.
-2. Draw a lasso around the region you want to inspect.
-3. Scope captures only the selected area and masks everything else.
-4. Codex runs in a protected, read-only search path with web search enabled.
-5. Scope normalizes the result, shows sources, and keeps the browser closed until you click a link.
-6. Optional follow-ups reuse the same private image.
-7. `Open Agent` launches normal interactive Codex for deeper work.
+Select an unfamiliar icon, setting, control, or software interface to get an
+explanation of what it is and how it is typically used.
 
-## Features
+### Charts and diagrams
 
-- Freehand lasso selection.
-- Protected visual search on the selected region only.
-- Codex web search with sourced results.
-- Clickable source chips.
-- Clickable links in supported answer text.
-- Expand/collapse result view.
-- Follow-up questions inside the result card.
-- Explicit `Open Agent` escalation.
-- Private runtime storage under `$XDG_RUNTIME_DIR/scope/<session>/`.
-- Automatic cleanup on close, Escape, failure, timeout, or session end.
-- Omarchy theme integration through `Color` and `Style`.
-- Fail-closed behavior when the configured Omarchy agent is not Codex.
+Use a selection to ask about a chart, diagram, technical visual, or other
+information that is difficult to describe precisely in text.
 
-## Requirements
+### Hard-to-copy content
 
-Scope currently requires:
+Scope works with screenshots, video frames, remote desktops, images, and
+non-selectable UI.
 
-- Omarchy Quattro / Quickshell
-- `Codex` CLI
-- `grim`
-- ImageMagick (`convert`) for masking
-- `jq` for helper-side parsing
+### Research
 
-For protected Scope Search, your Omarchy default agent must be set to Codex. If another agent is selected, Scope refuses to start the search path and shows a clear error instead of falling back.
+Select a product, object, or visual reference and get current web-grounded
+information with sources when the search path finds them.
 
-## Agent compatibility
+### Deeper work
 
-Scope Search is currently supported and tested with:
+```text
+Scope result
+    → Open Agent
+    → interactive Codex with the selected context
+```
 
-| Agent | Scope Search |
-| --- | --- |
-| Codex | Supported and tested |
-| Other Omarchy agents | Not currently enabled |
-
-Scope was intentionally built to fail closed until a protected visual-search path has been verified end to end.
+Scope does not claim to identify real people from faces.
 
 ## Installation
 
-The final public GitHub URL has not been attached to this checkout yet. Before
-publishing, replace the placeholder below with that URL:
-
-<!-- INSTALL: Replace <public-git-url> with the final GitHub clone URL before publishing. -->
+Scope is installed as a native Omarchy plugin:
 
 ```bash
-omarchy plugin add <public-git-url> --enable
-~/.config/omarchy/plugins/goblin.scope/install.sh
+omarchy plugin add https://github.com/sanjyay/scope --enable
 ```
 
-The first command uses Omarchy's official plugin installer. The second adds
-Scope's `SUPER + SHIFT + Q` binding; it is idempotent and does not require root.
+Enabling the plugin adds a magnifying-glass action to the Omarchy bar's
+default right section. Click it to open Scope. Scope does not edit
+`~/.config/hypr/bindings.lua`.
 
-For local development, run the installer from a checkout instead:
-
-```bash
-./install.sh
-```
-
-This copies only Scope's runtime files into Omarchy's plugin directory, adds
-the shortcut, and enables the plugin in the running shell.
-
-To remove it:
+To remove the plugin:
 
 ```bash
-~/.config/omarchy/plugins/goblin.scope/install.sh --uninstall
+omarchy plugin remove goblin.scope
 ```
 
 ## Usage
 
-1. Press `SUPER + SHIFT + Q`.
-2. Circle the on-screen content you want to inspect.
-3. Release the pointer to start protected search immediately.
-4. Read the answer and open sources only when you want to inspect them.
-5. Type a follow-up question if you want a second search on the same selection.
-6. Click `Open Agent` when you want the handoff to interactive Codex.
-7. Press `Escape` to cancel the active session or close Scope.
+1. Click the Scope magnifying glass in the bar.
+2. Draw around something on screen and release.
+3. Read the answer and open sources explicitly when you want to inspect them.
+4. Type a follow-up question if you want another search on the same selection.
+5. Choose **Expand** for the full result or **Open Agent** for interactive
+   Codex work.
+6. Press `Escape` to cancel an active search or close Scope.
 
-## Privacy & security
+The overlay is reusable immediately after cancellation or an Open Agent
+handoff.
 
-- Scope does not continuously watch the screen.
-- No background screenshot history is kept.
-- Only the lasso-selected region is captured.
-- Temporary files are stored privately in `$XDG_RUNTIME_DIR/scope/<session>/` with `0700` directories and `0600` files.
-- Temporary captures are cleaned automatically.
-- Scope does not use the clipboard for Search.
-- Scope does not store API keys or tokens.
-- Protected search runs in a restricted, read-only Codex mode.
-- Screenshot content, answer text, and web results are treated as untrusted input.
-- Scope does not open a browser automatically.
-- Source URLs open only after explicit user clicks.
-- `Open Agent` is an explicit escalation into normal interactive Codex.
+## Optional keyboard shortcut
 
-See [SECURITY.md](SECURITY.md) for the full threat model.
+The bar widget is the default access path. If you prefer keyboard access, add
+this optional entry to `~/.config/hypr/bindings.lua`:
 
-## Limitations
+```lua
+o.bind("SUPER + SHIFT + Q", "Scope", "omarchy-shell shell summon goblin.scope '{}'")
+```
 
-- Codex is the only supported protected visual-search backend in this release.
-- Scope inherits the capabilities and safety limits of Codex and its search mode.
-- Web answers can be wrong, incomplete, or outdated.
-- Not every visual query will produce useful sources.
-- Internet access is required for web search.
-- Some visual questions may be refused by the underlying agent.
+This is a manual user preference; Scope does not add or remove the binding.
+If you added it yourself, remove the line when you no longer want the
+shortcut.
+
+## Features
+
+- Native Omarchy `overlay` and `bar-widget` plugin kinds.
+- Freehand lasso with selected-region-only capture and polygon masking.
+- Codex vision analysis and protected web search.
+- Concise inline answers with structured, clickable sources.
+- Safe rendering of supported inline Markdown links.
+- Expandable results and follow-up questions using the same selected image.
+- Explicit Open Agent handoff to interactive Codex.
+- Immediate Escape cancellation and reusable session lifecycle.
+- Omarchy `Color`/`Style` theme integration.
+- Private runtime storage with restrictive permissions and automatic cleanup.
+- Fail-closed behavior when the selected Omarchy agent is not Codex.
+
+## Agent compatibility
+
+Scope currently supports **Codex** for protected visual search and requires
+Codex to be the selected Omarchy default agent. Scope refreshes that selection
+when it opens; it does not silently fall back to Codex when another agent is
+configured.
+
+The protected path needs all of the following together:
+
+- local image input;
+- reliable non-interactive execution;
+- web search;
+- structured or reliably handled sources;
+- restrictive, read-only execution;
+- predictable cancellation; and
+- a safe interactive handoff.
+
+Codex is the path that has been verified end to end for Scope. Other agents
+are not currently enabled—not because they are necessarily incapable, but
+because their complete image, web-search, permissions, source, cancellation,
+and handoff behavior has not been verified for this plugin.
+
+I currently use Codex as my paid agent, so it is the implementation I can test
+thoroughly myself. I do not want to mark another adapter as supported until it
+has been exercised under the same constraints.
 
 ## Help test additional agents
 
-I would welcome help from people who already have working access to compatible agents and want to validate a protected visual-search adapter.
-
-If you use any of the following, you can help test future support:
+If you already have access to another Omarchy-compatible agent, help validate
+future support by opening an issue or proposing a compatibility contribution.
+Useful candidates include:
 
 - Claude Code
 - OpenCode
@@ -176,40 +195,97 @@ If you use any of the following, you can help test future support:
 - Pi
 - Oh My Pi
 - Crush
-- other Omarchy agents with image and web-search capabilities
+- other agents with local image input and web search
 
-Helpful reports include:
+Please report the agent and CLI version, image-input behavior, headless
+execution, web search, cited or structured output, restricted/read-only mode,
+and cancellation behavior. Include reproducible steps and sanitized logs.
 
-- CLI version
-- whether non-interactive image input works
-- whether web search works
-- whether structured or cited output is available
-- whether a restricted or read-only mode is actually enforceable
+**Never post API keys, tokens, cookies, credentials, or authentication files in
+an issue.**
 
-Please open an issue with reproducible steps and sanitized logs if you can help.
+## Privacy & security
 
-Never post API keys, tokens, cookies, or authentication files in an issue.
+- Scope does not continuously watch the screen or take background screenshots.
+- Capture begins only after an explicit selection, and only the selected region
+  is retained.
+- Temporary images and handoff context stay in private runtime storage with
+  restrictive permissions and bounded cleanup. Scope keeps no screenshot
+  history.
+- Scope does not use the clipboard for Search and does not store API keys or
+  tokens. It uses the user's existing Codex authentication.
+- Selected images, questions, and web-search data may be transmitted through
+  Codex/OpenAI according to the user's service and configuration terms.
+- Screenshot contents, model answers, and web results are untrusted data.
+- Protected Search is restricted/read-only. Sources open only after an explicit
+  click; the browser is not opened automatically.
+- Open Agent is an explicit escalation into normal interactive Codex.
 
-## Development / technical notes
+See [SECURITY.md](SECURITY.md) for the detailed threat model.
 
-Scope is a Quickshell overlay with a small helper pipeline:
+## Limitations
 
-`Quickshell overlay -> freehand lasso -> private masked PNG -> protected Codex execution -> answer + sources -> ResultCard`
+- Codex is the only supported protected visual-search backend in this release.
+- Scope inherits Codex and model/provider safety restrictions; some visual
+  questions may be refused.
+- Scope is not intended for facial recognition or identifying real people from
+  faces.
+- AI answers and web results can be wrong, incomplete, or outdated. Check the
+  sources for important decisions.
+- Web search requires internet access and a working Codex account/service.
+- Response time depends on the model, network, provider load, and search.
+- Some responses may not include useful web sources.
 
-The protected search path is separate from the interactive `Open Agent` path. Search is ephemeral and read-only; escalation is explicit and user-owned.
+## Technical overview
 
-Useful files:
+Scope is a native Omarchy Quattro multi-kind plugin with an overlay and a
+bar-widget entry point:
+
+```text
+Omarchy bar / optional shortcut
+        ↓
+Scope overlay
+        ↓
+freehand lasso
+        ↓
+selected Wayland region
+        ↓
+private masked image
+        ↓
+protected Codex search
+        ↓
+answer + sources
+        ↓
+ResultCard
+        ↓
+optional Open Agent handoff
+```
+
+The bar launcher is a native `BarWidget`/`BarIconButton` using Omarchy's
+standard magnifying-glass icon and in-process shell summon path. It launches
+the existing overlay; it does not create a second Scope instance or spawn a
+separate daemon.
+
+Useful entry points and implementation areas:
 
 - [Scope.qml](Scope.qml)
+- [ScopeLauncher.qml](ScopeLauncher.qml)
+- [ScopeOverlay.qml](ScopeOverlay.qml)
 - [ScopeService.qml](ScopeService.qml)
-- [components/ResultCard.qml](components/ResultCard.qml)
-- [components/LassoOverlay.qml](components/LassoOverlay.qml)
-- [scripts/scope-helper](scripts/scope-helper)
+- [components/](components/)
+- [scripts/](scripts/)
+- [tests/](tests/)
 
-## Known issues
+## Development
 
-No current known issues are documented beyond the limitations above.
+The repository includes the plugin manifest, runtime helper, QML components,
+security documentation, and regression tests. Validate changes in an Omarchy
+environment with the current plugin validator, `qmllint`, and the test runner.
+
+Please include the Omarchy version, Scope commit, Codex CLI version,
+reproduction steps, and sanitized logs in bug reports. Never include
+credentials.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+Scope is released under the [MIT License](LICENSE).

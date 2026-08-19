@@ -738,6 +738,25 @@ else
   fail "links: Markdown/HTML sanitizer did not keep untrusted answer content inert"
 fi
 
+echo ""
+echo "§14 Quattro plugin packaging"
+
+assert_output_contains "manifest: Scope declares overlay and bar-widget kinds" '"overlay", "bar-widget"' \
+  rg -n '"kinds": \["overlay", "bar-widget"\]' "$PLUGIN_DIR/manifest.json"
+assert_output_contains "manifest: overlay and bar-widget entry points are present" '"barWidget": "ScopeLauncher.qml"' \
+  rg -n '"barWidget": "ScopeLauncher.qml"' "$PLUGIN_DIR/manifest.json"
+assert_output_contains "bar widget: uses native BarIconButton" "BarIconButton" \
+  rg -n 'BarIconButton' "$PLUGIN_DIR/ScopeLauncher.qml"
+assert_output_contains "bar widget: summons the existing Scope overlay" 'bar.shell.summon' \
+  rg -n 'bar\.shell\.summon' "$PLUGIN_DIR/ScopeLauncher.qml"
+assert_output_contains "bar widget: has native search tooltip" 'Search screen with Scope' \
+  rg -n 'tooltipText: "Search screen with Scope"' "$PLUGIN_DIR/ScopeLauncher.qml"
+if [[ -e "$PLUGIN_DIR/install.sh" ]]; then
+  fail "packaging: obsolete install.sh remains"
+else
+  pass "packaging: no install.sh or binding installer remains"
+fi
+
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 echo ""
 

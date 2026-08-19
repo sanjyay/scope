@@ -6,9 +6,17 @@
   "author": "goblin",
   "license": "MIT",
   "description": "Circle anything on screen and search it with Codex vision and protected web search.",
-  "kinds": ["overlay"],
+  "kinds": ["overlay", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "Scope.qml"
+    "overlay": "Scope.qml",
+    "barWidget": "ScopeLauncher.qml"
+  },
+  "barWidget": {
+    "displayName": "Scope",
+    "description": "Select screen context and search it with Codex",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }
