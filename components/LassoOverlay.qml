@@ -86,9 +86,7 @@ Item {
       root.minY = Math.min(root.minY, mouse.y); root.maxY = Math.max(root.maxY, mouse.y)
       root.lastSampledX = mouse.x
       root.lastSampledY = mouse.y
-      // Coalesce to one frame, never debounce: restarting this timer for every
-      // pointer event postpones paint until the pointer stops moving.
-      if (!repaintTimer.running) repaintTimer.start()
+      lassoCanvas.requestPaint()
     }
 
     onReleased: function(mouse) {
@@ -134,8 +132,6 @@ Item {
     }
   }
 
-  Timer { id: repaintTimer; interval: 16; repeat: false; onTriggered: lassoCanvas.requestPaint() }
-
   // ── canvas renderer ───────────────────────────────────────────────────────
 
   Canvas {
@@ -153,22 +149,31 @@ Item {
 
       ctx.save()
 
+      var drawSmoothPath = function(close) {
+        ctx.beginPath()
+        ctx.moveTo(pts[0].x, pts[0].y)
+        if (pts.length < 3) {
+          for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
+        } else {
+          for (var i = 1; i < pts.length - 1; i++) {
+            var xc = (pts[i].x + pts[i+1].x) / 2
+            var yc = (pts[i].y + pts[i+1].y) / 2
+            ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc)
+          }
+          ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y)
+        }
+        if (close) ctx.closePath()
+      }
+
       // ── filled region ──────────────────────────────────────────────────
-      ctx.beginPath()
-      ctx.moveTo(pts[0].x, pts[0].y)
-      for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
-      ctx.closePath()
+      drawSmoothPath(true)
       ctx.fillStyle = Color.accent
       ctx.globalAlpha = 0.10
       ctx.fill()
       ctx.globalAlpha = 1
 
       // ── outer glow stroke ──────────────────────────────────────────────
-      ctx.beginPath()
-      ctx.moveTo(pts[0].x, pts[0].y)
-      for (var j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y)
-      if (!root.drawing) ctx.closePath()
-
+      drawSmoothPath(!root.drawing)
       ctx.strokeStyle = Color.imagePicker.unselectedBorder
       ctx.lineWidth = Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.20))
       ctx.lineJoin = "round"
@@ -176,11 +181,7 @@ Item {
       ctx.stroke()
 
       // ── main stroke ────────────────────────────────────────────────────
-      ctx.beginPath()
-      ctx.moveTo(pts[0].x, pts[0].y)
-      for (var k = 1; k < pts.length; k++) ctx.lineTo(pts[k].x, pts[k].y)
-      if (!root.drawing) ctx.closePath()
-
+      drawSmoothPath(!root.drawing)
       ctx.strokeStyle = Color.imagePicker.selectedBorder
       ctx.lineWidth = 1.75
       ctx.lineJoin = "round"

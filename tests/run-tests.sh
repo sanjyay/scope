@@ -757,6 +757,27 @@ else
   pass "packaging: no install.sh or binding installer remains"
 fi
 
+echo ""
+echo "§15 Lasso Optimization"
+assert_output_contains "lasso: point thresholding" "root.sampleThreshold" \
+  rg -n "sampleThreshold" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: incremental bbox correctness" "root.minX = Math.min" \
+  rg -n "root.minX = Math.min" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: reset clears all drawing state" "root.rawPoints = []" \
+  rg -n "root.rawPoints = \[\]" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: final polygon still closes correctly" "pts.concat([pts[0]])" \
+  rg -n "pts\.concat" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: tiny selection remains valid" "pts.length < 3" \
+  rg -n "pts.length < 3" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: large path remains valid" "root.drawing ? root.rawPoints : root.closedPoints" \
+  rg -n "root.drawing \? root.rawPoints : root.closedPoints" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_not_output_contains "lasso: no capture/search starts before release" "onPositionChanged.*complete" \
+  rg -n "complete" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: Escape resets active selection" "Qt.Key_Escape" \
+  rg -n "Qt.Key_Escape" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: multi-monitor coordinate conversion unchanged" "root.screenX" \
+  rg -n "root.screenX" "$PLUGIN_DIR/components/LassoOverlay.qml"
+
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 echo ""
 
