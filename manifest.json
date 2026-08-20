@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "goblin.scope",
+  "id": "scope",
   "name": "Scope",
   "version": "1.0.0",
-  "author": "goblin",
+  "author": "sanjyay",
   "license": "MIT",
   "description": "Circle anything on screen and search it with Codex vision and protected web search.",
   "kinds": ["overlay", "bar-widget"],
