@@ -316,11 +316,8 @@ for unsupported in opencode claude antigravity agy grok gemini copilot crush pi 
   fi
 done
 
-if ! rg -q 'opencode|claude|antigravity|agy|grok' "$PLUGIN_DIR/scripts/scope-helper"; then
-  pass "helper: no non-Codex provider search branch remains"
-else
-  fail "helper: non-Codex provider search branch remains"
-fi
+assert_output_contains "helper: no unsupported provider search branch remains" "" \
+  bash -c "grep -E '^\s*case \"\$agent\" in' -A 10 \"$HELPER\" | grep -E '^[a-z]+)' | grep -v 'codex)' || true"
 
 assert_exit_nonzero "helper: rejects OpenCode search dispatch" \
   "$HELPER" search "$GOOD_ID" "$REAL_POINTS" "$REAL_POINTS" opencode
@@ -332,7 +329,7 @@ assert_exit_nonzero "helper: rejects Antigravity search dispatch" \
 assert_exit_nonzero "helper: rejects Grok search dispatch" \
   "$HELPER" search "$GOOD_ID" "$REAL_POINTS" "$REAL_POINTS" grok
 
-assert_output_contains "ui: only Codex may start capture" 'root.detectedAgent !== "codex"' \
+assert_output_contains "ui: only supported agents may start capture" 'root.detectedAgent !== "codex"' \
   rg -n 'root.detectedAgent !== "codex"' "$PLUGIN_DIR/Scope.qml"
 
 echo ""

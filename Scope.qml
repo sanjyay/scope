@@ -54,6 +54,7 @@ Item {
   property bool agentDetected: false
   property bool agentDetectionDone: false
 
+
   // ── invocation ────────────────────────────────────────────────────────────
   property string invocationId: ""
   property string capturedImagePath: ""
@@ -381,7 +382,6 @@ Item {
   function startInitialSearch() {
     if (root.scopeState !== "Selecting") return
     // Never use a stale/default provider from an earlier Scope invocation.
-    // Codex is the sole protected visual-search backend for this build.
     if (root.agentFreshGeneration !== root.sessionGeneration ||
         root.detectedAgent !== "codex") {
       root.scopeState = "UnsupportedAgent"

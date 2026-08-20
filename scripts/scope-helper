@@ -436,6 +436,7 @@ invoke_codex() {
 }
 
 # ────────────────────── codex search adapter ─────────────────────────────────
+
 invoke_codex_search() {
   local image_path="$1"
   local question="$2"
@@ -535,7 +536,9 @@ cmd_search() {
   local response_file="$inv_dir/response.txt"
   rm -f "$response_file"
 
-  scope_adapter_codex_search "$image_path" "$question" "$response_file" "$inv_dir"
+  if [[ $adapter == "codex" ]]; then
+    scope_adapter_codex_search "$image_path" "$question" "$response_file" "$inv_dir"
+  fi
   echo "$response_file"
 }
 
@@ -566,10 +569,12 @@ cmd_escalate() {
   cp -- "$image_path" "$esc_image"
   chmod 600 "$esc_image"
 
-  [[ $adapter == "codex" ]] || die "Couldn't open Codex"
-  [[ $(omarchy-default-agent) == "codex" ]] || die "Couldn't open Codex"
-  command -v omarchy-launch-tui >/dev/null 2>&1 || die "Couldn't open Codex"
-  command -v codex >/dev/null 2>&1 || die "Couldn't open Codex"
+  [[ $adapter == "codex" ]] || die "Couldn't open agent"
+
+  local default_agent=$(omarchy-default-agent)
+  [[ $default_agent == "codex" ]] || die "Couldn't open agent"
+  command -v omarchy-launch-tui >/dev/null 2>&1 || die "Couldn't open agent"
+  command -v $default_agent >/dev/null 2>&1 || die "Couldn't open agent"
 
   # Follow Omarchy's normal interactive launch convention. Its launcher uses
   # $HOME/Work when available (to avoid treating HOME as a project); otherwise
@@ -590,12 +595,14 @@ cmd_escalate() {
   # it detached from Scope's helper and close its stdio so Quickshell receives
   # the success acknowledgement now, rather than after Codex eventually exits.
   # A short probe still catches launcher failures before Scope clears its card.
-  omarchy-launch-tui --app-id=org.omarchy.agent \
-    codex --dangerously-bypass-approvals-and-sandbox \
-    -C "$interactive_cwd" \
-    -i "$esc_image" \
-    "This session was opened from Scope. The selected image is attached. Continue interactively with the user." \
-    </dev/null >/dev/null 2>&1 &
+  if [[ $default_agent == "codex" ]]; then
+    omarchy-launch-tui --app-id=org.omarchy.agent \
+      codex --dangerously-bypass-approvals-and-sandbox \
+      -C "$interactive_cwd" \
+      -i "$esc_image" \
+      "This session was opened from Scope. The selected image is attached. Continue interactively with the user." \
+      </dev/null >/dev/null 2>&1 &
+  fi
   local launcher_pid=$!
   sleep 0.1
   if ! kill -0 "$launcher_pid" 2>/dev/null; then
