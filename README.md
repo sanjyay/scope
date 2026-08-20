@@ -1,6 +1,6 @@
 # Scope
 
-**Select it. Understand it. Solve it.**
+**Circle anything on your screen and let Codex explain, research, or solve it.**
 
 Scope is a visual context tool for Omarchy. Select anything on your screen and
 get a web-grounded explanation, solution, or research result from Codex—then
