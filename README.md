@@ -7,7 +7,10 @@ get a web-grounded explanation, solution, or research result from Codex—then
 hand that context directly to the agent when you need to go deeper.
 
 
-https://github.com/user-attachments/assets/be330f11-9948-411d-9cf6-d5ada31dd007
+
+
+https://github.com/user-attachments/assets/fd73f463-649e-4ec4-8cb1-6dff40312f38
+
 
 
 
@@ -118,7 +121,7 @@ omarchy plugin remove sanjyay.scope
 ```
 
 ## Usage
-<img width="280" height="102" alt="image" src="https://github.com/user-attachments/assets/603a46b9-96bd-48ea-b553-1b020d43cb71" />
+<img width="280" height="102" alt="image" src="https://github.com/user-attachments/assets/cab98835-5fe8-4d1d-a6fd-06c174c43938" />
 
 1. Click the Scope icon in the Omarchy bar.
 2. Draw around something on screen and release.
