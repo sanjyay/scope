@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import qs.Ui
 
 // Small, stateless launcher for the Scope overlay. The overlay remains the
@@ -19,8 +20,26 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰍉"
     tooltipText: "Search screen with Scope"
+
+    iconComponent: Component {
+      Item {
+        anchors.fill: parent
+        Image {
+          id: img
+          anchors.fill: parent
+          source: Qt.resolvedUrl("assets/scope.svg")
+          fillMode: Image.PreserveAspectFit
+          visible: false
+        }
+        MultiEffect {
+          anchors.fill: img
+          source: img
+          colorization: 1.0
+          colorizationColor: button.active && button.useActiveColor ? button.activeColor : button.foreground
+        }
+      }
+    }
 
     onPressed: function(mouseButton) {
       if (mouseButton === Qt.LeftButton) root.openScope()
