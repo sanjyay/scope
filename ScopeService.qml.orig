@@ -144,39 +144,6 @@ Item {
     if (analyzeProc.running) analyzeProc.running = false
   }
 
-  function handleActivityEvent(jsonString) {
-    try {
-      var obj = JSON.parse(jsonString)
-      if (obj.type === "turn.started") {
-        root.activityEvent("status", "Analyzing selection…", "")
-      } else if (obj.type === "item.completed" && obj.item) {
-        if (obj.item.type === "web_search") {
-          var q = ""
-          if (obj.item.query) {
-            q = obj.item.query
-          } else if (obj.item.action && obj.item.action.queries && obj.item.action.queries.length > 0) {
-            q = obj.item.action.queries[0]
-          }
-          if (q) {
-            q = q.replace(/[\x00-\x1F\x7F]/g, "").trim()
-            if (q.length > 250) q = q.substring(0, 250) + "…"
-            root.activityEvent("web-search", "Searching the web", q)
-          }
-        } else if (obj.item.type === "command_execution") {
-          var cmd = obj.item.command || ""
-          if (cmd) {
-            cmd = cmd.replace(/[\x00-\x1F\x7F]/g, "").trim()
-            if (cmd.length > 250) cmd = cmd.substring(0, 250) + "…"
-            root.activityEvent("command", "Analyzing environment", cmd)
-          }
-        } else if (obj.item.type === "agent_message") {
-          // If we receive an intermediate agent_message, it's preparing response.
-          root.activityEvent("status", "Preparing response…", "")
-        }
-      }
-    } catch (e) {}
-  }
-
   function cleanupInvocation(invId) {
     if (!invId || !/^[0-9a-f]{16}$/.test(invId)) return
     var p = cleanupProcComp.createObject(root, {

@@ -17,8 +17,16 @@ BorderSurface {
   property string responseText: ""
   property string agentName: ""
   property var webSources: []
+  property string activityTitle: ""
+  property string activityDetail: ""
   property bool isExpanded: false
   property bool escalationPending: false
+
+  onScopeStateChanged: {
+    if (scopeState === "Result") {
+      Qt.callLater(focusFollowUp)
+    }
+  }
 
   function safeWebUrl(value) {
     if (typeof value !== "string") return ""
@@ -64,6 +72,9 @@ BorderSurface {
     return true
   }
 
+  function focusFollowUp() {
+    followUp.forceActiveFocus()
+  }
 
   signal closed()
   signal openAgent()
@@ -130,14 +141,30 @@ BorderSurface {
 
       LoadingDots {}
 
-      Text {
-    textFormat: Text.PlainText
+      Column {
         anchors.verticalCenter: parent.verticalCenter
-        text: "Searching…"
-        color: Color.popups.text
-        opacity: 0.72
-        font.pixelSize: Style.font.body
-        font.family: Style.font.menuFamily
+        spacing: Style.spacing.xs
+
+        Text {
+          textFormat: Text.PlainText
+          text: root.activityTitle !== "" ? root.activityTitle : "Analyzing selection…"
+          color: Color.popups.text
+          opacity: 0.72
+          font.pixelSize: Style.font.body
+          font.family: Style.font.menuFamily
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          visible: root.activityDetail !== ""
+          text: root.activityDetail
+          color: Color.popups.text
+          opacity: 0.50
+          font.pixelSize: Style.font.small
+          font.family: Style.font.menuFamily
+          elide: Text.ElideRight
+          width: Math.min(implicitWidth, 250)
+        }
       }
     }
 

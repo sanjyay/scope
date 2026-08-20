@@ -62,6 +62,8 @@ Item {
   property string errorText: ""
   property var webSources: []
   property string pendingQuestion: ""
+  property string activityTitle: ""
+  property string activityDetail: ""
   property string latestFollowUp: ""
   property int responseGeneration: -1
   property bool escalationPending: false
@@ -255,6 +257,8 @@ Item {
     root.responseText = ""
     root.errorText = ""
     root.webSources = []
+    root.activityTitle = ""
+    root.activityDetail = ""
     root.pendingQuestion = ""
     root.latestFollowUp = ""
     root.pendingSearchAfterAgentRefresh = false
@@ -425,6 +429,12 @@ Item {
 
   // ── service callbacks ─────────────────────────────────────────────────────
 
+  function onActivityEvent(type, title, detail) {
+    if (service.activeGeneration !== root.sessionGeneration) return
+    root.activityTitle = title
+    root.activityDetail = detail
+  }
+
   function onInvocationIdReady(id) {
     if (service.activeGeneration !== root.sessionGeneration) return
 
@@ -491,7 +501,7 @@ Item {
     captureW: 0
     captureH: 0
     imageLassoPoints: []
-
+    onActivityEvent: function(type, title, detail) { root.onActivityEvent(type, title, detail) }
     onInvocationIdReady: function(id) { root.onInvocationIdReady(id) }
     onCaptureSucceeded: function(path) { root.onCaptureSucceeded(path) }
     onCaptureFailed: function(msg) { root.onCaptureFailed(msg) }
@@ -523,9 +533,11 @@ Item {
       agentDetected: root.agentDetected
       agentDetectionDone: root.agentDetectionDone
       responseText: root.responseText
-      webSources: root.webSources
       errorText: root.errorText
+      webSources: root.webSources
       pendingQuestion: root.pendingQuestion
+      activityTitle: root.activityTitle
+      activityDetail: root.activityDetail
       escalationPending: root.escalationPending
       onLassoComplete: function(points, bbox) {
         root.onLassoComplete(points, bbox, modelData)

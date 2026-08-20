@@ -495,7 +495,7 @@ SCHEMA
   local exit_code=0
   # `setsid` gives this Scope-owned search a private process group, allowing
   # Escape to stop Codex and its helper without affecting other Codex sessions.
-  setsid timeout "$TIMEOUT_AGENT" codex exec -c tools.web_search.enabled=true --output-schema "$schema_file" --ephemeral --sandbox read-only --ignore-user-config --ignore-rules --skip-git-repo-check -C "$inv_dir" -i "$image_path" -o "$response_file" - < "$prompt_file" >/dev/null 2>&1 &
+  setsid timeout "$TIMEOUT_AGENT" codex exec --json -c tools.web_search.enabled=true --output-schema "$schema_file" --ephemeral --sandbox read-only --ignore-user-config --ignore-rules --skip-git-repo-check -C "$inv_dir" -i "$image_path" -o "$response_file" - < "$prompt_file" 2>/dev/null &
   _active_child_pid=$!
   wait "$_active_child_pid" || exit_code=$?
   _active_child_pid=""

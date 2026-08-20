@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "properties": {
+    "answer": { "type": "string", "description": "Concise answer (2-4 sentences)" },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "url": { "type": "string" }
+        },
+        "required": ["title", "url"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["answer", "sources"],
+  "additionalProperties": false
+}

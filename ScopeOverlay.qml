@@ -20,6 +20,14 @@ PanelWindow {
   // ── inputs from parent (Scope.qml) ───────────────────────────────────────
   required property var screen
   property string scopeState: "Idle"
+  onScopeStateChanged: {
+    if (scopeState === "Idle") {
+      panel.finalOutlineVisible = false
+      panel.finalOutlinePoints = []
+      finalOutlineTimer.stop()
+      finalOutlineCanvas.requestPaint()
+    }
+  }
   property var lassoPoints: []
   property int selectionX: 0
   property int selectionY: 0
@@ -33,6 +41,8 @@ PanelWindow {
   property string errorText: ""
   property var webSources: []
   property string pendingQuestion: ""
+  property string activityTitle: ""
+  property string activityDetail: ""
   property bool escalationPending: false
 
   // ── signals to parent ─────────────────────────────────────────────────────
@@ -103,9 +113,64 @@ PanelWindow {
     screenY: panel.screen.y
 
     onComplete: function(points, bbox) {
+      panel.finalOutlinePoints = lasso.closedPoints.slice()
+      panel.finalOutlineVisible = true
+      finalOutlineTimer.restart()
+      finalOutlineCanvas.requestPaint()
       panel.lassoComplete(points, bbox)
     }
     onCancelled: panel.cancelled()
+  }
+
+  // ── final selection outline ───────────────────────────────────────────────
+
+  property var finalOutlinePoints: []
+  property bool finalOutlineVisible: false
+
+  Timer {
+    id: finalOutlineTimer
+    interval: 3000
+    repeat: false
+    onTriggered: {
+      panel.finalOutlineVisible = false
+      panel.finalOutlinePoints = []
+      finalOutlineCanvas.requestPaint()
+    }
+  }
+
+  Canvas {
+    id: finalOutlineCanvas
+    anchors.fill: parent
+    visible: panel.isActiveScreen && panel.finalOutlineVisible
+    antialiasing: true
+
+    onPaint: {
+      var ctx = getContext("2d")
+      ctx.clearRect(0, 0, width, height)
+      var pts = panel.finalOutlinePoints
+      if (!pts || pts.length === 0) return
+
+      ctx.save()
+      ctx.beginPath()
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (var i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y)
+      }
+
+      ctx.strokeStyle = Color.imagePicker.unselectedBorder
+      ctx.lineWidth = Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.20))
+      ctx.lineJoin = "round"
+      ctx.lineCap = "round"
+      ctx.stroke()
+
+      ctx.strokeStyle = Color.imagePicker.selectedBorder
+      ctx.lineWidth = 1.75
+      ctx.lineJoin = "round"
+      ctx.lineCap = "round"
+      ctx.stroke()
+
+      ctx.restore()
+    }
   }
 
   // ── result card ───────────────────────────────────────────────────────────

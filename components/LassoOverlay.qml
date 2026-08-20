@@ -156,29 +156,16 @@ Item {
 
       ctx.save()
 
-      var drawPath = function(close) {
-        ctx.beginPath()
-        ctx.moveTo(pts[0].x, pts[0].y)
-        for (var i = 1; i < pts.length; i++) {
-          ctx.lineTo(pts[i].x, pts[i].y)
-        }
-        if (root.drawing && root.currentPointerPoint) {
-          ctx.lineTo(root.currentPointerPoint.x, root.currentPointerPoint.y)
-        }
-        if (close) ctx.closePath()
+      ctx.beginPath()
+      ctx.moveTo(pts[0].x, pts[0].y)
+      for (var i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y)
       }
-
-      // ── filled region ──────────────────────────────────────────────────
-      if (!root.drawing) {
-        drawPath(true)
-        ctx.fillStyle = Color.accent
-        ctx.globalAlpha = 0.10
-        ctx.fill()
-        ctx.globalAlpha = 1
+      if (root.drawing && root.currentPointerPoint) {
+        ctx.lineTo(root.currentPointerPoint.x, root.currentPointerPoint.y)
       }
 
       // ── outer glow stroke ──────────────────────────────────────────────
-      drawPath(!root.drawing)
       ctx.strokeStyle = Color.imagePicker.unselectedBorder
       ctx.lineWidth = Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.20))
       ctx.lineJoin = "round"
@@ -186,7 +173,6 @@ Item {
       ctx.stroke()
 
       // ── main stroke ────────────────────────────────────────────────────
-      drawPath(!root.drawing)
       ctx.strokeStyle = Color.imagePicker.selectedBorder
       ctx.lineWidth = 1.75
       ctx.lineJoin = "round"
