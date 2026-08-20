@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "sanjyay",
   "license": "MIT",
-  "description": "Circle anything on screen and search it with Codex vision and protected web search.",
+  "description": "Select anything on screen and get a web-grounded explanation or solution with Codex.",
   "kinds": ["overlay", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {

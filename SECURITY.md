@@ -16,11 +16,30 @@ Unsupported agents fail closed; Scope does not guess at an unsafe command.
 - Temporary files are private: `$XDG_RUNTIME_DIR/scope/<session>/`, with `umask 077`, `0700` directories, and `0600` files. They are removed on Escape, close, failure, timeout/session end, and by a bounded TTL. Scope keeps no persistent history and does not use the clipboard.
 - Escape invalidates the active generation and terminates only the current Scope helper and its dedicated backend process group. Scope never uses `pkill` or `killall` for Codex.
 
+## Masking
+
+Scope enforces fail-closed image masking:
+- The screenshot is cropped strictly to the selection bounding box.
+- A lasso polygon mask is applied.
+- Pixels outside the lasso are excluded (transparent).
+- If masking fails (e.g., malformed geometry or image-processing error), the search immediately aborts.
+- The unmasked fallback image is never sent to the agent.
+
 ## Escalation
 
-**Open Agent** is the explicit escalation boundary. Only after the user selects it does Scope open a normal interactive session of the detected backend (Codex), passing the selected image and concise Scope Search context. It is never opened automatically when a search completes.
+Scope maintains two clear boundaries:
 
-## Remaining risks
+**Protected Search:**
+- Scope-owned and ephemeral
+- Read-only / sandboxed according to the current verified Codex invocation
+- Fully cancellable without affecting other sessions
+
+**Open Agent:**
+- Explicit user escalation
+- Launches a normal interactive Codex session
+- User-owned after launch
+- Scope does NOT disable Codex approvals or sandboxing
+- Scope does NOT kill the interactive session later
 
 Scope cannot prevent a user from selecting sensitive content or prevent an AI provider from retaining/processing content under that provider’s policies. Restriction flags depend on future agent CLI behavior. A malicious administrator with access to the user runtime directory is outside Scope’s protection model.
 

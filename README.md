@@ -21,8 +21,6 @@ The interaction is inspired by the convenience of Circle-to-Search, but Scope
 is built as a native Omarchy workflow around the desktop, Quickshell, and your
 configured Codex agent.
 
-<!-- DEMO: Add the final Scope demo GIF/video here. -->
-<!-- SCREENSHOT: Add a Scope lasso/result screenshot here. -->
 
 ## Why Scope
 
@@ -109,20 +107,20 @@ Scope is installed as a native Omarchy plugin:
 omarchy plugin add https://github.com/sanjyay/scope --enable
 ```
 
-Enabling the plugin adds a magnifying-glass action to the Omarchy bar's
+Enabling the plugin adds a Scope action to the Omarchy bar's
 default right section. Click it to open Scope. Scope does not edit
 `~/.config/hypr/bindings.lua`.
 
 To remove the plugin:
 
 ```bash
-omarchy plugin remove goblin.scope
+omarchy plugin remove sanjyay.scope
 ```
 
 ## Usage
 <img width="280" height="102" alt="image" src="https://github.com/user-attachments/assets/603a46b9-96bd-48ea-b553-1b020d43cb71" />
 
-1. Click the Scope magnifying glass in the bar.
+1. Click the Scope icon in the Omarchy bar.
 2. Draw around something on screen and release.
 3. Read the answer and open sources explicitly when you want to inspect them.
 4. Type a follow-up question if you want another search on the same selection.
@@ -139,7 +137,7 @@ The bar widget is the default access path. If you prefer keyboard access, add
 this optional entry to `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + SHIFT + Q", "Scope", "omarchy-shell shell summon goblin.scope '{}'")
+o.bind("SUPER + SHIFT + Q", "Scope", "omarchy-shell shell summon sanjyay.scope '{}'")
 ```
 
 This is a manual user preference; Scope does not add or remove the binding.
@@ -151,8 +149,8 @@ shortcut.
 - Native Omarchy `overlay` and `bar-widget` plugin kinds.
 - Freehand lasso with selected-region-only capture and polygon masking.
 - Codex vision analysis and protected web search.
-- Concise inline answers with structured, clickable sources.
-- Safe rendering of supported inline Markdown links.
+- Concise plain-text answers with structured clickable sources.
+- Validated source URLs that open safely in the browser.
 - Expandable results and follow-up questions using the same selected image.
 - Explicit Open Agent handoff to interactive Codex.
 - Immediate Escape cancellation and reusable session lifecycle.
@@ -162,53 +160,14 @@ shortcut.
 
 ## Agent compatibility
 
-Scope currently supports **Codex** for protected visual search and requires
-Codex to be the selected Omarchy default agent. Scope refreshes that selection
-when it opens; it does not silently fall back to Codex when another agent is
-configured.
+Scope currently supports **Codex** only.
+Protected Scope Search requires:
+- Codex CLI installed
+- Codex authenticated and configured (Scope does not bundle credentials or API keys)
+- Codex set as the current default Omarchy agent
 
-The protected path needs all of the following together:
+Other Omarchy agents may be added after their complete image + web-search + protected-execution path is verified.
 
-- local image input;
-- reliable non-interactive execution;
-- web search;
-- structured or reliably handled sources;
-- restrictive, read-only execution;
-- predictable cancellation; and
-- a safe interactive handoff.
-
-Codex is the path that has been verified end to end for Scope. Other agents
-are not currently enabled—not because they are necessarily incapable, but
-because their complete image, web-search, permissions, source, cancellation,
-and handoff behavior has not been verified for this plugin.
-
-I currently use Codex as my paid agent, so it is the implementation I can test
-thoroughly myself. I do not want to mark another adapter as supported until it
-has been exercised under the same constraints.
-
-## Help test additional agents
-
-If you already have access to another Omarchy-compatible agent, help validate
-future support by opening an issue or proposing a compatibility contribution.
-Useful candidates include:
-
-- Claude Code
-- OpenCode
-- Antigravity
-- Grok
-- Gemini CLI
-- Copilot
-- Pi
-- Oh My Pi
-- Crush
-- other agents with local image input and web search
-
-Please report the agent and CLI version, image-input behavior, headless
-execution, web search, cited or structured output, restricted/read-only mode,
-and cancellation behavior. Include reproducible steps and sanitized logs.
-
-**Never post API keys, tokens, cookies, credentials, or authentication files in
-an issue.**
 
 ## Privacy & security
 
@@ -267,8 +226,8 @@ ResultCard
 optional Open Agent handoff
 ```
 
-The bar launcher is a native `BarWidget`/`BarIconButton` using Omarchy's
-standard magnifying-glass icon and in-process shell summon path. It launches
+The bar launcher is a native `BarWidget`/`BarIconButton` using the
+custom Scope icon and in-process shell summon path. It launches
 the existing overlay; it does not create a second Scope instance or spawn a
 separate daemon.
 

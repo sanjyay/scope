@@ -23,7 +23,7 @@ Item {
   // Quickshell.shellDir is the shell's dir, not our plugin dir.
   // We rely on OMARCHY_PATH + our plugin id to locate scripts.
   property string omarchyPath: Quickshell.env("OMARCHY_PATH") || ""
-  readonly property string pluginId: "goblin.scope"
+  readonly property string pluginId: "sanjyay.scope"
 
   // The plugin dir is determined at install time.
   // Scripts are located relative to the manifest, which is our plugin dir.

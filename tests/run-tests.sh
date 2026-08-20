@@ -184,11 +184,11 @@ assert_exit_zero "cleanup: idempotent (already gone)" \
 
 echo ""
 
-# ── section 4: analyze adapter validation ──────────────────────────────────
+# ── section 4: search adapter validation ──────────────────────────────────
 
 echo "§4 Analyze adapter validation"
 
-# Setup a new invocation dir for analyze tests
+# Setup a new invocation dir for search tests
 ANA_ID="$(dd if=/dev/urandom bs=8 count=1 2>/dev/null | od -A n -t x1 | tr -d ' \n')"
 ANA_DIR="$RUNTIME_BASE/$ANA_ID"
 mkdir -p "$ANA_DIR"
@@ -206,25 +206,25 @@ echo "What is this?" > "$FAKE_QUESTION"
 chmod 600 "$FAKE_QUESTION"
 
 # Unsupported adapter
-assert_exit_nonzero "analyze: unsupported adapter" \
-  "$HELPER" analyze "$ANA_ID" "$FAKE_PNG" "$FAKE_QUESTION" "gpt4"
+assert_exit_nonzero "search: unsupported adapter" \
+  "$HELPER" search "$ANA_ID" "$FAKE_PNG" "$FAKE_QUESTION" "gpt4"
 
-assert_exit_nonzero "analyze: adapter with shell injection" \
-  "$HELPER" analyze "$ANA_ID" "$FAKE_PNG" "$FAKE_QUESTION" "codex; rm -rf ~"
+assert_exit_nonzero "search: adapter with shell injection" \
+  "$HELPER" search "$ANA_ID" "$FAKE_PNG" "$FAKE_QUESTION" "codex; rm -rf ~"
 
-assert_exit_nonzero "analyze: adapter empty" \
-  "$HELPER" analyze "$ANA_ID" "$FAKE_PNG" "$FAKE_QUESTION" ""
+assert_exit_nonzero "search: adapter empty" \
+  "$HELPER" search "$ANA_ID" "$FAKE_PNG" "$FAKE_QUESTION" ""
 
 # Image path outside runtime
-assert_exit_nonzero "analyze: image outside runtime" \
-  "$HELPER" analyze "$ANA_ID" "/etc/passwd" "$FAKE_QUESTION" "codex"
+assert_exit_nonzero "search: image outside runtime" \
+  "$HELPER" search "$ANA_ID" "/etc/passwd" "$FAKE_QUESTION" "codex"
 
-assert_exit_nonzero "analyze: image path traversal" \
-  "$HELPER" analyze "$ANA_ID" "$RUNTIME_BASE/../../etc/passwd" "$FAKE_QUESTION" "codex"
+assert_exit_nonzero "search: image path traversal" \
+  "$HELPER" search "$ANA_ID" "$RUNTIME_BASE/../../etc/passwd" "$FAKE_QUESTION" "codex"
 
 # Question file outside runtime
-assert_exit_nonzero "analyze: question outside runtime" \
-  "$HELPER" analyze "$ANA_ID" "$FAKE_PNG" "/etc/passwd" "codex"
+assert_exit_nonzero "search: question outside runtime" \
+  "$HELPER" search "$ANA_ID" "$FAKE_PNG" "/etc/passwd" "codex"
 
 # Cleanup
 "$HELPER" cleanup "$ANA_ID" >/dev/null 2>&1 || true
@@ -245,7 +245,7 @@ chmod 700 "$INJ_DIR"
 SENTINEL="$INJ_DIR/injection-sentinel"
 rm -f "$SENTINEL"
 
-# Create a minimal test PNG for the analyze calls
+# Create a minimal test PNG for the search calls
 FAKE_PNG2="$INJ_DIR/fake.png"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0bIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82' > "$FAKE_PNG2"
 chmod 600 "$FAKE_PNG2"
@@ -269,7 +269,7 @@ for payload in "${PAYLOADS[@]}"; do
   # The question should never be eval'd. Codex won't run here (no auth),
   # but the important property is: the shell command in the payload does
   # not execute at scope-helper's level.
-  "$HELPER" analyze "$INJ_ID" "$FAKE_PNG2" "$Q" "codex" >/dev/null 2>&1 || true
+  "$HELPER" search "$INJ_ID" "$FAKE_PNG2" "$Q" "codex" >/dev/null 2>&1 || true
 done
 
 # Verify no sentinel was created by helper-level execution
