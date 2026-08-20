@@ -23,9 +23,10 @@ Item {
   property real screenX: 0
   property real screenY: 0
 
+  onEnabledChanged: { if (!enabled) { root.drawing = false; root.hasSelection = false; root.rawPoints = []; root.closedPoints = []; root.currentPointerPoint = null; lassoCanvas.requestPaint(); } }
+
   signal complete(var points, var bbox)
   signal cancelled()
-  onEnabledChanged: { if (!enabled) { root.drawing = false; root.hasSelection = false; root.rawPoints = []; root.closedPoints = []; lassoCanvas.requestPaint(); } }
 
   // ── internal state ────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ Item {
   property var rawPoints: []      // [{x,y}] window-relative, accumulated during drag
   property var closedPoints: []   // [{x,y}] after release (includes closure back to start)
   property bool hasSelection: false
+  property var currentPointerPoint: null // {x,y} live tail point
 
   // Sampling: only record a point if we've moved >= threshold pixels.
   // This limits the array size without visually affecting the lasso shape.
@@ -66,6 +68,7 @@ Item {
       root.hasSelection = false
       root.closedPoints = []
       root.rawPoints = [{ x: mouse.x, y: mouse.y }]
+      root.currentPointerPoint = { x: mouse.x, y: mouse.y }
       root.minX = root.maxX = mouse.x
       root.minY = root.maxY = mouse.y
       root.lastSampledX = mouse.x
@@ -76,16 +79,20 @@ Item {
     onPositionChanged: function(mouse) {
       if (!root.drawing) return
 
+      // Always update live tail and request a paint
+      root.currentPointerPoint = { x: mouse.x, y: mouse.y }
+
       var dx = mouse.x - root.lastSampledX
       var dy = mouse.y - root.lastSampledY
-      if (dx * dx + dy * dy < root.sampleThreshold * root.sampleThreshold) return
-
-      // Keep the capture path mutable; never clone an ever-growing array.
-      root.rawPoints.push({ x: mouse.x, y: mouse.y })
-      root.minX = Math.min(root.minX, mouse.x); root.maxX = Math.max(root.maxX, mouse.x)
-      root.minY = Math.min(root.minY, mouse.y); root.maxY = Math.max(root.maxY, mouse.y)
-      root.lastSampledX = mouse.x
-      root.lastSampledY = mouse.y
+      if (dx * dx + dy * dy >= root.sampleThreshold * root.sampleThreshold) {
+        // Keep the capture path mutable; never clone an ever-growing array.
+        root.rawPoints.push({ x: mouse.x, y: mouse.y })
+        root.minX = Math.min(root.minX, mouse.x); root.maxX = Math.max(root.maxX, mouse.x)
+        root.minY = Math.min(root.minY, mouse.y); root.maxY = Math.max(root.maxY, mouse.y)
+        root.lastSampledX = mouse.x
+        root.lastSampledY = mouse.y
+      }
+      
       lassoCanvas.requestPaint()
     }
 
@@ -145,35 +152,33 @@ Item {
       ctx.clearRect(0, 0, width, height)
 
       var pts = root.drawing ? root.rawPoints : root.closedPoints
-      if (pts.length < 2) return
+      if (pts.length === 0) return
 
       ctx.save()
 
-      var drawSmoothPath = function(close) {
+      var drawPath = function(close) {
         ctx.beginPath()
         ctx.moveTo(pts[0].x, pts[0].y)
-        if (pts.length < 3) {
-          for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
-        } else {
-          for (var i = 1; i < pts.length - 1; i++) {
-            var xc = (pts[i].x + pts[i+1].x) / 2
-            var yc = (pts[i].y + pts[i+1].y) / 2
-            ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc)
-          }
-          ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y)
+        for (var i = 1; i < pts.length; i++) {
+          ctx.lineTo(pts[i].x, pts[i].y)
+        }
+        if (root.drawing && root.currentPointerPoint) {
+          ctx.lineTo(root.currentPointerPoint.x, root.currentPointerPoint.y)
         }
         if (close) ctx.closePath()
       }
 
       // ── filled region ──────────────────────────────────────────────────
-      drawSmoothPath(true)
-      ctx.fillStyle = Color.accent
-      ctx.globalAlpha = 0.10
-      ctx.fill()
-      ctx.globalAlpha = 1
+      if (!root.drawing) {
+        drawPath(true)
+        ctx.fillStyle = Color.accent
+        ctx.globalAlpha = 0.10
+        ctx.fill()
+        ctx.globalAlpha = 1
+      }
 
       // ── outer glow stroke ──────────────────────────────────────────────
-      drawSmoothPath(!root.drawing)
+      drawPath(!root.drawing)
       ctx.strokeStyle = Color.imagePicker.unselectedBorder
       ctx.lineWidth = Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.20))
       ctx.lineJoin = "round"
@@ -181,37 +186,12 @@ Item {
       ctx.stroke()
 
       // ── main stroke ────────────────────────────────────────────────────
-      drawSmoothPath(!root.drawing)
+      drawPath(!root.drawing)
       ctx.strokeStyle = Color.imagePicker.selectedBorder
       ctx.lineWidth = 1.75
       ctx.lineJoin = "round"
       ctx.lineCap = "round"
       ctx.stroke()
-
-      // ── start-point dot ────────────────────────────────────────────────
-      ctx.beginPath()
-      ctx.arc(pts[0].x, pts[0].y, 5, 0, Math.PI * 2)
-      ctx.fillStyle = Color.imagePicker.selectedBorder
-      ctx.fill()
-
-      // ── closing hint: proximity ring near start when drawing ───────────
-      if (root.drawing && pts.length > 5) {
-        var last = pts[pts.length - 1]
-        var dx = last.x - pts[0].x
-        var dy = last.y - pts[0].y
-        var dist = Math.sqrt(dx * dx + dy * dy)
-        if (dist < 40) {
-          // Pulse the start dot to hint the user can close here
-          var alpha = 0.3 + 0.5 * (1 - dist / 40)
-          ctx.beginPath()
-          ctx.arc(pts[0].x, pts[0].y, 12, 0, Math.PI * 2)
-          ctx.strokeStyle = Color.imagePicker.selectedBorder
-          ctx.globalAlpha = alpha
-          ctx.lineWidth = Math.max(Style.spacing.hairline, Style.space(2))
-          ctx.stroke()
-          ctx.globalAlpha = 1
-        }
-      }
 
       ctx.restore()
     }
@@ -225,6 +205,7 @@ Item {
       root.drawing = false
       root.rawPoints = []
       root.closedPoints = []
+      root.currentPointerPoint = null
       root.hasSelection = false
       lassoCanvas.requestPaint()
       root.cancelled()

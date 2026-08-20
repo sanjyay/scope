@@ -37,42 +37,19 @@ BorderSurface {
     return "Source " + String(index + 1)
   }
 
-  function escapeHtml(value) {
-    return String(value || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;")
-  }
-
-  function formatPlainMarkdown(value) {
-    var escaped = escapeHtml(value)
-    escaped = escaped.replace(/\*\*([^*\r\n]{1,512})\*\*/g, "<b>$1</b>")
-    return escaped.replace(/\r?\n/g, "<br>")
-  }
-
-  // Only links intentionally parsed from Markdown become rich-text anchors.
-  // All ordinary model output is escaped before Text.RichText renders it.
-  function safeAnswerMarkup(value) {
+  function formatModelAnswerAsPlain(value) {
     var source = String(value || "")
     var pattern = /\[([^\]\r\n]{1,512})\]\(([^)\r\n]{1,4096})\)/g
     var result = ""
     var cursor = 0
     var match
     while ((match = pattern.exec(source)) !== null) {
-      result += formatPlainMarkdown(source.slice(cursor, match.index))
-      var safeUrl = safeWebUrl(match[2])
-      var label = formatPlainMarkdown(match[1])
-      if (safeUrl) {
-        result += "<a href=\"" + escapeHtml(safeUrl) + "\" style=\"color:" + Color.accent + ";\">" + label + "</a>"
-      } else {
-        // Do not leave unsafe/raw Markdown URL syntax visible.
-        result += label
-      }
+      result += source.slice(cursor, match.index)
+      var label = match[1]
+      result += label
       cursor = pattern.lastIndex
     }
-    return result + formatPlainMarkdown(source.slice(cursor))
+    return result + source.slice(cursor)
   }
 
   function openWebUrl(value) {
@@ -154,6 +131,7 @@ BorderSurface {
       LoadingDots {}
 
       Text {
+    textFormat: Text.PlainText
         anchors.verticalCenter: parent.verticalCenter
         text: "Searching…"
         color: Color.popups.text
@@ -183,16 +161,15 @@ BorderSurface {
           spacing: Style.spacing.xxl
 
           Text {
+    textFormat: Text.PlainText
             id: responseText
             width: parent.width
-            text: root.safeAnswerMarkup(root.responseText)
+            text: root.formatModelAnswerAsPlain(root.responseText)
             color: Color.popups.text
             font.pixelSize: Style.font.body
             font.family: Style.font.menuFamily
             wrapMode: Text.Wrap
             lineHeight: 1.5
-            textFormat: Text.RichText
-            onLinkActivated: function(link) { root.openWebUrl(link) }
           }
 
           // Sources Section
@@ -202,6 +179,7 @@ BorderSurface {
             spacing: Style.spacing.controlGap
 
             Text {
+    textFormat: Text.PlainText
               text: "Sources"
               color: Color.popups.text
               opacity: 0.72
@@ -230,6 +208,7 @@ BorderSurface {
                   border.width: Style.controlBorderWidth(false, hovered)
 
                   Text {
+    textFormat: Text.PlainText
                     id: sourceChipLabel
                     anchors.left: parent.left
                     anchors.right: parent.right
@@ -285,6 +264,7 @@ BorderSurface {
                     spacing: Style.spacing.sm
 
                     Text {
+    textFormat: Text.PlainText
                       width: parent.width
                       text: String(index + 1) + ". " + root.sourceTitle(modelData, index)
                       color: Color.popups.text
@@ -295,6 +275,7 @@ BorderSurface {
                     }
 
                     Text {
+    textFormat: Text.PlainText
                       width: parent.width
                       text: modelData.url
                       color: Color.accent
@@ -356,6 +337,7 @@ BorderSurface {
       border.width: Style.controlBorderWidth(followUp.activeFocus, false)
 
       Text {
+    textFormat: Text.PlainText
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         anchors.leftMargin: Style.spacing.controlPaddingX
@@ -417,6 +399,7 @@ BorderSurface {
         Behavior on color { ColorAnimation { duration: 80 } }
 
         Text {
+    textFormat: Text.PlainText
           id: expandLabel
           anchors.centerIn: parent
           text: root.isExpanded ? "Collapse" : "Expand"
@@ -452,6 +435,7 @@ BorderSurface {
         Behavior on color { ColorAnimation { duration: 80 } }
 
         Text {
+    textFormat: Text.PlainText
           id: closeLabel
           anchors.centerIn: parent
           text: "Close"
@@ -489,6 +473,7 @@ BorderSurface {
         Behavior on color { ColorAnimation { duration: 80 } }
 
         Text {
+    textFormat: Text.PlainText
           id: openAgentLabel
           anchors.centerIn: parent
           text: root.escalationPending ? "Opening…" : "Open Agent"

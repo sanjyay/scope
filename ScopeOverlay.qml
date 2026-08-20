@@ -88,57 +88,6 @@ PanelWindow {
     }
   }
 
-  // ── selected region highlight ─────────────────────────────────────────────
-  // After the lasso is released, keep the selection area brighter.
-  // We draw a hole in the dim by placing a transparent rect with a subtle border.
-
-  Rectangle {
-    id: selHighlight
-    visible: isActiveScreen && selectionW > 0 && selectionH > 0 && (
-      scopeState === "Capturing" ||
-      scopeState === "Searching" ||
-      scopeState === "Result"
-    )
-
-    // selectionX/Y are screen-absolute; this PanelWindow covers the whole screen
-    // anchored to the screen origin, so we use the coords directly.
-    x: selectionX - panel.screen.x
-    y: selectionY - panel.screen.y
-    width: selectionW
-    height: selectionH
-    color: "transparent"
-    radius: Style.cornerRadius
-
-    // Bright border around the selection
-    Rectangle {
-      anchors.fill: parent
-      anchors.margins: -2
-      color: "transparent"
-      border.color: Color.imagePicker.selectedBorder
-      border.width: Math.max(Style.spacing.hairline, Style.space(2))
-      radius: parent.radius + 2
-    }
-
-    // Corner accent dots
-    Repeater {
-      model: [
-        { ax: 0, ay: 0, ax2: 0, ay2: 0 },          // top-left
-        { ax: 1, ay: 0, ax2: -6, ay2: 0 },          // top-right
-        { ax: 0, ay: 1, ax2: 0, ay2: -6 },          // bottom-left
-        { ax: 1, ay: 1, ax2: -6, ay2: -6 }          // bottom-right
-      ]
-
-      Rectangle {
-        required property var modelData
-        x: selHighlight.width * modelData.ax + modelData.ax2
-        y: selHighlight.height * modelData.ay + modelData.ay2
-        width: Style.spacing.md
-        height: Style.spacing.md
-        radius: Math.min(Style.cornerRadius, width / 2)
-        color: Color.imagePicker.selectedBorder
-      }
-    }
-  }
 
   // ── lasso overlay ─────────────────────────────────────────────────────────
 
@@ -222,6 +171,7 @@ PanelWindow {
       spacing: Style.spacing.xxl
 
       Text {
+    textFormat: Text.PlainText
         width: parent.width
         text: "Scope Search"
         color: Color.popups.text
@@ -233,6 +183,7 @@ PanelWindow {
       }
 
       Text {
+    textFormat: Text.PlainText
         width: parent.width
         text: "Scope currently supports Codex only.\n\nCurrent Omarchy agent:\n" + panel.displayAgent(panel.detectedAgent) + "\n\nSwitch your default agent to Codex\nand open Scope again."
         color: Color.popups.text
@@ -256,6 +207,7 @@ PanelWindow {
         border.width: Style.controlBorderWidth(false, hovered)
 
         Text {
+    textFormat: Text.PlainText
           anchors.centerIn: parent
           text: "Close"
           color: Color.popups.text

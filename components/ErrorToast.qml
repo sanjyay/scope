@@ -34,6 +34,7 @@ BorderSurface {
     spacing: Style.spacing.controlGap
 
     Text {
+    textFormat: Text.PlainText
       text: "⚠"
       color: Color.urgent
       font.pixelSize: Style.font.body
@@ -42,6 +43,7 @@ BorderSurface {
     }
 
     Text {
+    textFormat: Text.PlainText
       text: root.message
       color: Color.notifications.text
       font.pixelSize: Style.font.body

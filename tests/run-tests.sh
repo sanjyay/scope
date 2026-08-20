@@ -698,16 +698,14 @@ else
   pass "links: browser opener has no shell interpolation"
 fi
 
-# Rich text is deliberately opt-in: model text is HTML-escaped first and only
-# safe Markdown links become anchors. Nothing opens except click activation.
-assert_output_contains "links: model answer is HTML escaped" "function escapeHtml" \
-  rg -n 'function escapeHtml' "$PLUGIN_DIR/components/ResultCard.qml"
-assert_output_contains "links: Markdown links are converted safely" "function safeAnswerMarkup" \
-  rg -n 'function safeAnswerMarkup' "$PLUGIN_DIR/components/ResultCard.qml"
-assert_output_contains "links: answer uses safe rich text" "textFormat: Text.RichText" \
-  rg -n 'textFormat: Text.RichText' "$PLUGIN_DIR/components/ResultCard.qml"
-assert_output_contains "links: inline links require explicit activation" "onLinkActivated: function(link)" \
-  rg -n 'onLinkActivated: function\(link\)' "$PLUGIN_DIR/components/ResultCard.qml"
+# Rich text is removed entirely for security: model text is rendered as plain text
+# and Markdown links are stripped to just their labels.
+assert_not_output_contains "links: no RichText rendering" "Text.RichText" \
+  rg -n 'Text.RichText' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "links: model answer is plain text" "textFormat: Text.PlainText" \
+  rg -n 'textFormat: Text.PlainText' "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "links: Markdown links are stripped safely" "function formatModelAnswerAsPlain" \
+  rg -n 'function formatModelAnswerAsPlain' "$PLUGIN_DIR/components/ResultCard.qml"
 if node - "$PLUGIN_DIR/components/ResultCard.qml" <<'NODE'
 const fs = require("fs");
 const source = fs.readFileSync(process.argv[2], "utf8");
@@ -716,26 +714,17 @@ function body(expression) {
   if (!match) throw new Error("missing expected ResultCard helper");
   return match[1];
 }
-const safeWebUrl = new Function("value", body(/function safeWebUrl\(value\) \{([\s\S]*?)\n  \}\n\n  function sourceTitle/));
-const escapeHtml = new Function("value", body(/function escapeHtml\(value\) \{([\s\S]*?)\n  \}\n\n  function formatPlainMarkdown/));
-const formatPlainMarkdownRaw = new Function("value", "escapeHtml", body(/function formatPlainMarkdown\(value\) \{([\s\S]*?)\n  \}\n\n  \/\//));
-const formatPlainMarkdown = (value) => formatPlainMarkdownRaw(value, escapeHtml);
-const safeAnswerMarkup = new Function("value", "safeWebUrl", "escapeHtml", "formatPlainMarkdown", "Color", body(/function safeAnswerMarkup\(value\) \{([\s\S]*?)\n  \}\n\n  function openWebUrl/));
-const render = (value) => safeAnswerMarkup(value, safeWebUrl, escapeHtml, formatPlainMarkdown, { accent: "#123456" });
-const valid = render("[Zellum](https://zellum.example/item)");
-const hostile = render("<script>alert(1)</script> [bad](javascript:alert(1))");
-const passed = valid.includes('href="https://zellum.example/item"')
-  && valid.includes(">Zellum</a>")
-  && !valid.includes("[Zellum](")
-  && hostile.includes("&lt;script&gt;")
-  && !hostile.includes("javascript:")
-  && !hostile.includes("href=");
+const formatModelAnswerAsPlain = new Function("value", body(/function formatModelAnswerAsPlain\(value\) \{([\s\S]*?)\n  \}\n\n  function openWebUrl/));
+const valid = formatModelAnswerAsPlain("[Zellum](https://zellum.example/item)");
+const hostile = formatModelAnswerAsPlain("<script>alert(1)</script> [bad](javascript:alert(1))");
+const passed = valid === "Zellum"
+  && hostile === "<script>alert(1)</script> bad)";
 process.exit(passed ? 0 : 1);
 NODE
 then
-  pass "links: valid Markdown becomes an anchor while HTML and unsafe links stay inert"
+  pass "links: valid Markdown is stripped to plain text label"
 else
-  fail "links: Markdown/HTML sanitizer did not keep untrusted answer content inert"
+  fail "links: Markdown/HTML sanitizer did not strip properly"
 fi
 
 echo ""
@@ -777,6 +766,28 @@ assert_output_contains "lasso: Escape resets active selection" "Qt.Key_Escape" \
   rg -n "Qt.Key_Escape" "$PLUGIN_DIR/components/LassoOverlay.qml"
 assert_output_contains "lasso: multi-monitor coordinate conversion unchanged" "root.screenX" \
   rg -n "root.screenX" "$PLUGIN_DIR/components/LassoOverlay.qml"
+
+assert_not_output_contains "lasso: no point-marker rendering code" "arc(" \
+  rg -n 'arc\(' "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_not_output_contains "lasso: no bbox visual rendering" "selHighlight" \
+  rg -n 'selHighlight' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "lasso: round cap configuration" "ctx.lineCap = \"round\"" \
+  rg -n 'ctx\.lineCap = "round"' "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: round join configuration" "ctx.lineJoin = \"round\"" \
+  rg -n 'ctx\.lineJoin = "round"' "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: accepted point explicitly invalidates Canvas" "lassoCanvas.requestPaint()" \
+  rg -n "lassoCanvas.requestPaint\(\)" "$PLUGIN_DIR/components/LassoOverlay.qml"
+
+assert_output_contains "lasso: pointer movement updates live pointer tail" "root.currentPointerPoint =" \
+  rg -n "root.currentPointerPoint =" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: live path renders when drawing=true" "root.drawing && root.currentPointerPoint" \
+  rg -n "root.drawing && root.currentPointerPoint" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: live path does not require selectionComplete" "pts.length === 0" \
+  rg -n "pts.length === 0" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_not_output_contains "lasso: live path does not call closePath" "drawPath(false)" \
+  rg -n "drawPath\(!root.drawing\)" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: reset clears currentPointerPoint" "root.currentPointerPoint = null" \
+  rg -n "root.currentPointerPoint = null" "$PLUGIN_DIR/components/LassoOverlay.qml"
 
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 echo ""

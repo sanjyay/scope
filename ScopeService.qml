@@ -265,10 +265,7 @@ Item {
     running: false
     property string textData: ""
     property string targetPath: ""
-    command: ["bash", "-c", 'cat << "EOF" > "$1"
-' + textData + '
-EOF
-', "bash", targetPath]
+    command: ["bash", "-c", 'printf "%s" "$1" > "$2"', "--", textData, targetPath]
     onExited: { if (!root.workCancelled) root.runCapture() }
   }
 
