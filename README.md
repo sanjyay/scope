@@ -121,6 +121,19 @@ Scope is installed as a native Omarchy plugin:
 omarchy plugin add https://github.com/sanjyay/scope --enable
 ```
 
+Scope installs normally through `omarchy plugin add`; authentication is not an
+installation step. Before Protected Search can run, Codex must use your OS
+keyring for ChatGPT authentication:
+
+```bash
+codex -c 'cli_auth_credentials_store="keyring"' login --device-auth
+```
+
+This is your existing ChatGPT Codex login, not API-key billing. Scope never
+stores your credentials. Protected Search performs a bounded local readiness
+check each time Scope opens and shows setup guidance if Codex, bubblewrap,
+Secret Service, or keyring-backed login is unavailable.
+
 Enabling the plugin adds a Scope action to the Omarchy bar's
 default right section. Click it to open Scope. Scope does not edit
 `~/.config/hypr/bindings.lua`.
@@ -128,7 +141,7 @@ default right section. Click it to open Scope. Scope does not edit
 To remove the plugin:
 
 ```bash
-omarchy plugin remove sanjyay.scope
+omarchy plugin remove scope
 ```
 
 ## Usage
@@ -151,7 +164,7 @@ The bar widget is the default access path. If you prefer keyboard access, add
 this optional entry to `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + SHIFT + Q", "Scope", "omarchy-shell shell summon sanjyay.scope '{}'")
+o.bind("SUPER + SHIFT + Q", "Scope", "omarchy-shell shell summon scope '{}'")
 ```
 
 This is a manual user preference; Scope does not add or remove the binding.
@@ -177,7 +190,8 @@ shortcut.
 Scope currently supports **Codex** only.
 Protected Scope Search requires:
 - Codex CLI installed
-- Codex authenticated and configured (Scope does not bundle credentials or API keys)
+- Codex authenticated with ChatGPT through the OS keyring
+- bubblewrap and the user's Secret Service session available
 - Codex set as the current default Omarchy agent
 
 Other Omarchy agents may be added after their complete image + web-search + protected-execution path is verified.

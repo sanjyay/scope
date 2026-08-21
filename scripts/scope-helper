@@ -44,6 +44,7 @@ readonly MAX_QUESTION_BYTES=4096
 readonly MAX_CAPTURE_SIZE_BYTES=$((8 * 1024 * 1024))   # 8 MiB
 readonly TIMEOUT_CAPTURE=15
 readonly TIMEOUT_AGENT=120
+readonly TIMEOUT_READINESS=8
 readonly TTL_SECONDS=600   # 10 minutes
 
 RUNTIME_BASE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/scope"
@@ -103,6 +104,92 @@ cmd_capabilities() {
     codex) scope_adapter_capabilities codex codex ;;
     *) printf '{"id":"%s","installed":false,"vision":false,"webSearch":false,"protectedMode":false,"structuredOutput":false}\n' "$1" ;;
   esac
+}
+
+# Populated by codex_protected_preflight and consumed only by protected Search.
+# Runtime readiness and Search therefore share one authoritative prerequisite check.
+PREFLIGHT_STATUS="readiness_error"
+PREFLIGHT_BWRAP_BIN=""
+PREFLIGHT_SANDBOX_CODEX_BIN=""
+PREFLIGHT_BWRAP_ARGS=()
+PREFLIGHT_CODEX_ARGS=()
+
+codex_protected_preflight() {
+  local inv_dir="$1"
+  PREFLIGHT_STATUS="readiness_error"
+  local bwrap_bin codex_bin
+  codex_bin=$(command -v codex 2>/dev/null) || { PREFLIGHT_STATUS="codex_missing"; return 1; }
+  bwrap_bin=$(command -v bwrap 2>/dev/null) || { PREFLIGHT_STATUS="bwrap_missing"; return 1; }
+  if [[ -f $codex_bin ]] && grep -qF 'mise x "codex"' "$codex_bin" 2>/dev/null; then
+    codex_bin=$(mise which codex 2>/dev/null) || { PREFLIGHT_STATUS="codex_missing"; return 1; }
+  fi
+  [[ $codex_bin == /* && -f $codex_bin && -x $codex_bin ]] || { PREFLIGHT_STATUS="codex_missing"; return 1; }
+
+  local codex_install_dir sandbox_codex_dir scope_home scope_user scope_uid scope_codex_home user_bus
+  codex_install_dir=$(dirname "$(dirname "$codex_bin")")
+  sandbox_codex_dir="/opt/scope-codex"
+  scope_home="${HOME:-}"
+  [[ $scope_home == /* ]] || return 1
+  scope_user=$(id -un)
+  scope_uid=$(id -u)
+  scope_codex_home="$scope_home/.codex"
+  user_bus="/run/user/$scope_uid/bus"
+  [[ -S $user_bus ]] || { PREFLIGHT_STATUS="secret_service_unavailable"; return 1; }
+
+  PREFLIGHT_BWRAP_ARGS=(
+    "--tmpfs" "/" "--ro-bind" "/usr" "/usr" "--ro-bind" "/lib" "/lib"
+    "--ro-bind" "/bin" "/bin" "--dev" "/dev" "--proc" "/proc"
+    "--tmpfs" "/tmp" "--dir" "/etc" "--dir" "/opt"
+    "--ro-bind" "$codex_install_dir" "$sandbox_codex_dir"
+    "--dir" "/home" "--dir" "$scope_home" "--dir" "$scope_codex_home"
+    "--dir" "/run" "--dir" "/run/user" "--dir" "/run/user/$scope_uid"
+    "--ro-bind" "$user_bus" "$user_bus" "--dir" "/run/user/$scope_uid/scope"
+    "--bind" "$inv_dir" "$inv_dir" "--chdir" "$inv_dir" "--clearenv"
+    "--setenv" "HOME" "$scope_home" "--setenv" "CODEX_HOME" "$scope_codex_home"
+    "--setenv" "USER" "$scope_user" "--setenv" "LOGNAME" "$scope_user"
+    "--setenv" "PATH" "/usr/bin:/bin" "--setenv" "LANG" "C.UTF-8"
+    "--setenv" "XDG_RUNTIME_DIR" "/run/user/$scope_uid"
+    "--setenv" "DBUS_SESSION_BUS_ADDRESS" "unix:path=$user_bus"
+    "--unshare-all" "--share-net" "--die-with-parent" "--new-session"
+  )
+  [[ -d /lib64 ]] && PREFLIGHT_BWRAP_ARGS+=( "--ro-bind" "/lib64" "/lib64" )
+  local runtime_etc_path
+  for runtime_etc_path in \
+    /etc/ssl /etc/ca-certificates /etc/pki /etc/ld.so.conf.d \
+    /etc/hosts /etc/nsswitch.conf /etc/gai.conf /etc/host.conf \
+    /etc/passwd /etc/group /etc/machine-id /etc/localtime \
+    /etc/os-release /etc/ld.so.cache /etc/ld.so.conf /etc/resolv.conf; do
+    [[ -e $runtime_etc_path || -L $runtime_etc_path ]] && \
+      PREFLIGHT_BWRAP_ARGS+=( "--ro-bind" "$runtime_etc_path" "$runtime_etc_path" )
+  done
+  if [[ -e /run/systemd/resolve ]]; then
+    PREFLIGHT_BWRAP_ARGS+=( "--dir" "/run/systemd" "--ro-bind" "/run/systemd/resolve" "/run/systemd/resolve" )
+  fi
+
+  PREFLIGHT_BWRAP_BIN="$bwrap_bin"
+  PREFLIGHT_SANDBOX_CODEX_BIN="$sandbox_codex_dir/bin/$(basename "$codex_bin")"
+  PREFLIGHT_CODEX_ARGS=( "-c" 'cli_auth_credentials_store="keyring"' )
+  timeout "$TIMEOUT_READINESS" "$PREFLIGHT_BWRAP_BIN" "${PREFLIGHT_BWRAP_ARGS[@]}" -- /bin/true \
+    >/dev/null 2>&1 || { PREFLIGHT_STATUS="readiness_error"; return 1; }
+  local auth_status
+  auth_status=$(timeout "$TIMEOUT_READINESS" "$PREFLIGHT_BWRAP_BIN" "${PREFLIGHT_BWRAP_ARGS[@]}" -- \
+    "$PREFLIGHT_SANDBOX_CODEX_BIN" "${PREFLIGHT_CODEX_ARGS[@]}" login status 2>&1) || {
+      PREFLIGHT_STATUS="keyring_login_required"; return 1;
+    }
+  [[ $auth_status == *"Logged in using ChatGPT"* ]] || { PREFLIGHT_STATUS="keyring_login_required"; return 1; }
+  PREFLIGHT_STATUS="ready"
+}
+
+cmd_readiness() {
+  [[ $# -eq 0 ]] || die "readiness: expected no args"
+  ensure_runtime_base
+  local readiness_dir
+  readiness_dir=$(mktemp -d --tmpdir="$RUNTIME_BASE" readiness.XXXXXX)
+  chmod 700 "$readiness_dir"
+  trap 'rm -rf -- "$readiness_dir"' RETURN
+  codex_protected_preflight "$readiness_dir" || true
+  printf '%s\n' "$PREFLIGHT_STATUS"
+  [[ $PREFLIGHT_STATUS == "ready" ]]
 }
 
 prune_stale_quietly() {
@@ -374,11 +461,6 @@ invoke_codex_search() {
   local response_file="$3"
   local inv_dir="$4"
 
-  command -v codex >/dev/null 2>&1 || {
-    echo "Codex CLI is not installed or not in PATH." > "$response_file"
-    return
-  }
-
   local prompt_file
   prompt_file=$(mktemp --tmpdir="$inv_dir" prompt.XXXXXX.txt)
   chmod 600 "$prompt_file"
@@ -423,120 +505,23 @@ USER QUESTION:
 }
 SCHEMA
 
-  local bwrap_bin
-  bwrap_bin=$(command -v bwrap 2>/dev/null) || {
-    echo '{"answer":"Protected search isolation could not be established. bwrap is required.","sources":[]}' > "$response_file"
-    return
-  }
-
-  local codex_bin
-  codex_bin=$(command -v codex 2>/dev/null) || {
-    echo '{"answer":"Protected search isolation could not be established. Codex is unavailable.","sources":[]}' > "$response_file"
-    return
-  }
-  # Omarchy's command is a mise launcher. Resolve the installed binary without
-  # mounting the launcher, mise configuration, or any other home content.
-  if [[ -f $codex_bin ]] && grep -qF 'mise x "codex"' "$codex_bin" 2>/dev/null; then
-    codex_bin=$(mise which codex 2>/dev/null) || {
-      echo '{"answer":"Protected search isolation could not be established. Codex runtime could not be resolved.","sources":[]}' > "$response_file"
-      return
-    }
-  fi
-  [[ $codex_bin == /* && -f $codex_bin && -x $codex_bin ]] || {
-    echo '{"answer":"Protected search isolation could not be established. Codex runtime is invalid.","sources":[]}' > "$response_file"
-    return
-  }
-
-  local codex_install_dir
-  codex_install_dir=$(dirname "$(dirname "$codex_bin")")
-  local sandbox_codex_dir="/opt/scope-codex"
-  local sandbox_codex_bin="$sandbox_codex_dir/bin/$(basename "$codex_bin")"
-  local scope_home="${HOME:-}"
-  [[ $scope_home == /* ]] || {
-    echo '{"answer":"Protected search isolation could not be established. HOME is invalid.","sources":[]}' > "$response_file"
-    return
-  }
-  local scope_user scope_uid scope_codex_home user_bus
-  scope_user=$(id -un)
-  scope_uid=$(id -u)
-  scope_codex_home="$scope_home/.codex"
-  user_bus="/run/user/$scope_uid/bus"
-  [[ -S $user_bus ]] || {
-    echo '{"answer":"Protected search isolation could not be established. Secret Service is unavailable.","sources":[]}' > "$response_file"
-    return
-  }
-
-  # Whole-process isolation: start from an empty root and expose only runtime
-  # dependencies, the Codex installation, Secret Service, and this invocation.
-  # HOME/CODEX_HOME keep their logical names for keyring lookup but are empty.
-  local bwrap_args=(
-    "--tmpfs" "/"
-    "--ro-bind" "/usr" "/usr"
-    "--ro-bind" "/lib" "/lib"
-    "--ro-bind" "/bin" "/bin"
-    "--dev" "/dev"
-    "--proc" "/proc"
-    "--tmpfs" "/tmp"
-    "--dir" "/etc"
-    "--dir" "/opt"
-    "--ro-bind" "$codex_install_dir" "$sandbox_codex_dir"
-    "--dir" "/home"
-    "--dir" "$scope_home"
-    "--dir" "$scope_codex_home"
-    "--dir" "/run"
-    "--dir" "/run/user"
-    "--dir" "/run/user/$scope_uid"
-    "--ro-bind" "$user_bus" "$user_bus"
-    "--dir" "/run/user/$scope_uid/scope"
-    "--bind" "$inv_dir" "$inv_dir"
-    "--chdir" "$inv_dir"
-    "--clearenv"
-    "--setenv" "HOME" "$scope_home"
-    "--setenv" "CODEX_HOME" "$scope_codex_home"
-    "--setenv" "USER" "$scope_user"
-    "--setenv" "LOGNAME" "$scope_user"
-    "--setenv" "PATH" "/usr/bin:/bin"
-    "--setenv" "LANG" "C.UTF-8"
-    "--setenv" "XDG_RUNTIME_DIR" "/run/user/$scope_uid"
-    "--setenv" "DBUS_SESSION_BUS_ADDRESS" "unix:path=$user_bus"
-    "--unshare-all"
-    "--share-net"
-    "--die-with-parent"
-    "--new-session"
-  )
-  [[ -d /lib64 ]] && bwrap_args+=( "--ro-bind" "/lib64" "/lib64" )
-
-  local runtime_etc_path
-  for runtime_etc_path in \
-    /etc/ssl /etc/ca-certificates /etc/pki /etc/ld.so.conf.d \
-    /etc/hosts /etc/nsswitch.conf /etc/gai.conf /etc/host.conf \
-    /etc/passwd /etc/group /etc/machine-id /etc/localtime \
-    /etc/os-release /etc/ld.so.cache /etc/ld.so.conf /etc/resolv.conf; do
-    [[ -e $runtime_etc_path || -L $runtime_etc_path ]] && \
-      bwrap_args+=( "--ro-bind" "$runtime_etc_path" "$runtime_etc_path" )
-  done
-  if [[ -e /run/systemd/resolve ]]; then
-    bwrap_args+=( "--dir" "/run/systemd" "--ro-bind" "/run/systemd/resolve" "/run/systemd/resolve" )
-  fi
-
-  local codex_common_args=( "-c" 'cli_auth_credentials_store="keyring"' )
-  local auth_status
-  auth_status=$("$bwrap_bin" "${bwrap_args[@]}" -- \
-    "$sandbox_codex_bin" "${codex_common_args[@]}" login status 2>&1) || {
-    echo '{"answer":"Protected search isolation could not be established. Keyring authentication is unavailable.","sources":[]}' > "$response_file"
-    return
-  }
-  if [[ $auth_status != *"Logged in using ChatGPT"* ]]; then
-    echo '{"answer":"Protected search isolation could not be established. Keyring authentication is unavailable.","sources":[]}' > "$response_file"
+  if ! codex_protected_preflight "$inv_dir"; then
+    case "$PREFLIGHT_STATUS" in
+      codex_missing) echo '{"scopePrerequisite":"codex_missing","answer":"Protected search isolation could not be established. Codex is unavailable.","sources":[]}' > "$response_file" ;;
+      bwrap_missing) echo '{"scopePrerequisite":"bwrap_missing","answer":"Protected search isolation could not be established. bwrap is required.","sources":[]}' > "$response_file" ;;
+      secret_service_unavailable) echo '{"scopePrerequisite":"secret_service_unavailable","answer":"Protected search isolation could not be established. Secret Service is unavailable.","sources":[]}' > "$response_file" ;;
+      keyring_login_required) echo '{"scopePrerequisite":"keyring_login_required","answer":"Protected search isolation could not be established. Keyring authentication is unavailable.","sources":[]}' > "$response_file" ;;
+      *) echo '{"scopePrerequisite":"readiness_error","answer":"Protected search isolation could not be established.","sources":[]}' > "$response_file" ;;
+    esac
     return
   fi
 
   local exit_code=0
   # `setsid` gives this Scope-owned search a private process group, allowing
   # Escape to stop Codex and its helper without affecting other Codex sessions.
-  setsid timeout "$TIMEOUT_AGENT" "$bwrap_bin" "${bwrap_args[@]}" -- \
-    "$sandbox_codex_bin" exec --json --strict-config \
-      "${codex_common_args[@]}" \
+  setsid timeout "$TIMEOUT_AGENT" "$PREFLIGHT_BWRAP_BIN" "${PREFLIGHT_BWRAP_ARGS[@]}" -- \
+    "$PREFLIGHT_SANDBOX_CODEX_BIN" exec --json --strict-config \
+      "${PREFLIGHT_CODEX_ARGS[@]}" \
       -c tools.web_search.enabled=true \
       -c features.shell_tool=false \
       -c features.view_image=false \
@@ -697,13 +682,14 @@ cmd_cleanup() {
 }
 
 # ────────────────────────── dispatch ──────────────────────────────────────────
-[[ $# -ge 1 ]] || die "Usage: scope-helper <init|capture|analyze|search|cleanup|prune>"
+[[ $# -ge 1 ]] || die "Usage: scope-helper <init|readiness|capture|analyze|search|cleanup|prune>"
 
 cmd="$1"
 shift
 
 case "$cmd" in
   init)    cmd_init ;;
+  readiness) cmd_readiness "$@" ;;
   capture) cmd_capture "$@" ;;
   analyze) cmd_analyze "$@" ;;
   search) cmd_search "$@" ;;

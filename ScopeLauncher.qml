@@ -6,7 +6,7 @@ import qs.Ui
 // single owner of selection and search state; this widget only summons it.
 BarWidget {
   id: root
-  moduleName: "sanjyay.scope"
+  moduleName: "scope"
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight

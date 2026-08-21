@@ -35,6 +35,7 @@ PanelWindow {
   property int selectionH: 0
   property var selectionScreen: null
   property string detectedAgent: ""
+  property string readinessStatus: ""
   property bool agentDetected: false
   property bool agentDetectionDone: false
   property string responseText: ""
@@ -88,6 +89,8 @@ PanelWindow {
         case "Capturing":
         case "Searching":
         case "Result":       return 1.0
+        case "CheckingReadiness": return 1.0
+        case "SetupRequired": return 1.0
         case "UnsupportedAgent": return 1.0
         case "Error":        return 1.0
         default:             return 0.0
@@ -96,6 +99,17 @@ PanelWindow {
     Behavior on opacity {
       NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
     }
+  }
+
+  SetupCard {
+    id: setupNotice
+    visible: isActiveScreen && (scopeState === "SetupRequired" || scopeState === "CheckingReadiness")
+    readinessStatus: panel.readinessStatus
+    anchors.centerIn: parent
+    onCopyRequested: function(command) {
+      Quickshell.execDetached(["wl-copy", command])
+    }
+    onCloseRequested: panel.cancelled()
   }
 
 

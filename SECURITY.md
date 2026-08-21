@@ -10,6 +10,12 @@ Scope supports **Codex** as its verified backend:
 - Codex runs with web search enabled, `features.shell_tool=false`, `features.view_image=false`, `--ephemeral`, `--sandbox read-only`, `--ignore-user-config`, `--ignore-rules`, and `--skip-git-repo-check`. The initial Scope image supplied with `-i` remains available.
 Unsupported agents fail closed; Scope does not guess at an unsafe command.
 
+The readiness card shown before selection is informational and is refreshed on
+every invocation. Protected Search repeats the same authoritative backend
+preflight immediately before launching Codex and still fails closed if the
+keyring, Secret Service, bubblewrap, or isolation setup changed after the UI
+check.
+
 ## Boundaries
 
 - Screenshot content, links, QR codes, terminal text, web results, and answer text are untrusted data. Scope assumes prompt injection may succeed; OS-enforced filesystem visibility prevents protected Search from accessing arbitrary local files even in that case.

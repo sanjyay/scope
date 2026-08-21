@@ -527,6 +527,128 @@ rm -rf "$FAIL_BIN" "$SANDBOX_BIN" "$SANDBOX_HOST_HOME" "$SANDBOX_DIR"
 rm -f "$SANDBOX_HOST_MARKER"
 
 echo ""
+echo "§9b Runtime readiness UX"
+
+assert_output_contains "readiness: helper exposes bounded local check" 'TIMEOUT_READINESS=8' \
+  rg -n 'TIMEOUT_READINESS' "$HELPER"
+assert_output_contains "readiness: exact keyring status check is shared" 'login status' \
+  rg -n 'login status' "$HELPER"
+assert_output_contains "readiness: valid ChatGPT status is required" 'Logged in using ChatGPT' \
+  rg -n 'Logged in using ChatGPT' "$HELPER"
+assert_output_contains "readiness: agent gate precedes protected preflight" 'if (!root.agentDetected)' \
+  rg -n 'if \(!root.agentDetected\)' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: unsupported agent has dedicated state" 'root.scopeState = "UnsupportedAgent"' \
+  rg -n 'UnsupportedAgent' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: Codex missing has dedicated copy" 'Codex CLI required' \
+  rg -n 'Codex CLI required' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: bwrap missing has protected-search copy" 'Scope requires bubblewrap to isolate Codex from local files.' \
+  rg -n 'requires bubblewrap' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: Secret Service missing has keyring copy" 'OS keyring unavailable' \
+  rg -n 'OS keyring unavailable' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: missing login uses SetupRequired" 'root.scopeState = "SetupRequired"' \
+  rg -n 'SetupRequired' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: ready proceeds to Selecting" 'root.scopeState = "Selecting"' \
+  rg -n -A 5 'function applyReadiness' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: setup command is exact" "codex -c 'cli_auth_credentials_store=\\\"keyring\\\"' login --device-auth" \
+  rg -n 'login --device-auth' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: dedicated setup card is rendered" 'SetupCard {' \
+  rg -n 'SetupCard' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: keyring state shows Copy command" 'text: "Copy command"' \
+  rg -n 'Copy command' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: setup card has Close action" 'text: "Close"' \
+  rg -n 'text: "Close"' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: copy uses structured wl-copy arguments" 'Quickshell.execDetached(["wl-copy", command])' \
+  rg -n 'wl-copy' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_not_output_contains "readiness: setup card has no follow-up input" 'Ask follow-up' \
+  rg -n 'Ask follow-up' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_not_output_contains "readiness: setup card has no Open Agent action" 'Open Agent' \
+  rg -n 'Open Agent' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: ResultCard excludes SetupRequired" 'scopeState === "Capturing" || scopeState === "Searching" || scopeState === "Result"' \
+  rg -n 'scopeState === "Capturing"' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: command only appears for missing keyring login" 'readinessStatus === "keyring_login_required"' \
+  rg -n 'setupShowCommand' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: Escape closes setup state" 'onActivated: panel.cancelled()' \
+  rg -n -A 2 'sequence: "Escape"' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: every open starts a fresh agent refresh" 'refreshAgentProc.running = true' \
+  rg -n -A 16 'function open' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: every Codex invocation starts a fresh preflight" 'readinessProc.running = true' \
+  rg -n 'readinessProc.running = true' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: backend Search repeats authoritative preflight" 'codex_protected_preflight "$inv_dir"' \
+  rg -n 'codex_protected_preflight' "$HELPER"
+assert_output_contains "readiness: backend prerequisite failures are tagged" '"scopePrerequisite":"keyring_login_required"' \
+  rg -n 'scopePrerequisite' "$HELPER"
+assert_output_contains "readiness: tagged backend failures return to SetupRequired" 'root.applyReadiness(data.scopePrerequisite)' \
+  rg -n 'scopePrerequisite' "$PLUGIN_DIR/Scope.qml"
+assert_not_output_contains "readiness: no login execution is exposed" 'login --device-auth' \
+  rg -n 'login --device-auth' "$HELPER" "$PLUGIN_DIR/ScopeService.qml"
+assert_not_output_contains "readiness: no auth file fallback" 'auth.json' \
+  rg -n 'auth.json' "$HELPER" "$PLUGIN_DIR/Scope.qml" "$PLUGIN_DIR/ScopeService.qml"
+
+# Mock executable discovery without relying on the machine's installed tools.
+READINESS_MISSING=$(mktemp -d)
+for tool in id mkdir chmod mktemp rm dirname; do ln -s "/usr/bin/$tool" "$READINESS_MISSING/$tool"; done
+if READINESS_OUT=$(PATH="$READINESS_MISSING" "$HELPER" readiness 2>&1); then
+  fail "readiness: missing Codex should fail closed"
+elif [[ $READINESS_OUT == *codex_missing* ]]; then
+  pass "readiness: Codex executable missing returns codex_missing"
+else
+  fail "readiness: Codex missing mock returned: $READINESS_OUT"
+fi
+cat > "$READINESS_MISSING/codex" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+chmod 700 "$READINESS_MISSING/codex"
+if READINESS_OUT=$(PATH="$READINESS_MISSING" "$HELPER" readiness 2>&1); then
+  fail "readiness: missing bwrap should fail closed"
+elif [[ $READINESS_OUT == *bwrap_missing* ]]; then
+  pass "readiness: bwrap executable missing returns bwrap_missing"
+else
+  fail "readiness: bwrap missing mock returned: $READINESS_OUT"
+fi
+ln -s /usr/bin/grep "$READINESS_MISSING/grep"
+cat > "$READINESS_MISSING/bwrap" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+rm "$READINESS_MISSING/id"
+cat > "$READINESS_MISSING/id" <<'MOCK'
+#!/bin/bash
+[[ ${1:-} == -u ]] && echo 999999 || echo scope-test-user
+MOCK
+chmod 700 "$READINESS_MISSING/bwrap" "$READINESS_MISSING/id"
+if READINESS_OUT=$(PATH="$READINESS_MISSING" "$HELPER" readiness 2>&1); then
+  fail "readiness: missing Secret Service should fail closed"
+elif [[ $READINESS_OUT == *secret_service_unavailable* ]]; then
+  pass "readiness: unavailable user bus returns secret_service_unavailable"
+else
+  fail "readiness: Secret Service mock returned: $READINESS_OUT"
+fi
+rm -rf "$READINESS_MISSING"
+
+# A keyring-missing mock runs inside the real production namespace. It never
+# contacts Codex or requires real authentication.
+READINESS_BIN=$(mktemp -d)
+mkdir -p "$READINESS_BIN/bin"
+cat > "$READINESS_BIN/bin/codex" <<'MOCK'
+#!/bin/bash
+if [[ ${*:-} == *"login status"* ]]; then
+  echo "Not logged in"
+  exit 1
+fi
+exit 99
+MOCK
+chmod 700 "$READINESS_BIN/bin/codex"
+if READINESS_OUT=$(PATH="$READINESS_BIN/bin:$PATH" "$HELPER" readiness 2>&1); then
+  fail "readiness: missing keyring login should fail closed"
+elif [[ $READINESS_OUT == *keyring_login_required* ]]; then
+  pass "readiness: missing keyring login mock returns SetupRequired status"
+else
+  fail "readiness: missing keyring login mock returned: $READINESS_OUT"
+fi
+rm -rf "$READINESS_BIN"
+
+echo ""
 echo "§10 Circle-to-Search UI and lifecycle"
 
 assert_output_contains "ui: lasso starts search immediately" "root.startInitialSearch()" \
@@ -562,10 +684,10 @@ else
   pass "ui: no Google-specific implementation"
 fi
 
-if rg -q "clipboard|wl-copy|xclip" "$PLUGIN_DIR/Scope.qml" "$PLUGIN_DIR/ScopeOverlay.qml" "$PLUGIN_DIR/ScopeService.qml" "$PLUGIN_DIR/components" "$HELPER"; then
-  fail "privacy: clipboard activity found"
+if rg -q 'bash -c.*wl-copy|sh -c.*wl-copy|eval.*wl-copy' "$PLUGIN_DIR/Scope.qml" "$PLUGIN_DIR/ScopeOverlay.qml" "$PLUGIN_DIR/ScopeService.qml" "$PLUGIN_DIR/components" "$HELPER"; then
+  fail "privacy: unsafe clipboard shell interpolation found"
 else
-  pass "privacy: no clipboard activity"
+  pass "privacy: fixed setup command uses no clipboard shell interpolation"
 fi
 
 # Verify cancellation scopes to the helper's owned search process group. This
@@ -716,6 +838,7 @@ echo "§12 Omarchy theme bindings"
 
 THEME_QML=(
   "$PLUGIN_DIR/ScopeOverlay.qml"
+  "$PLUGIN_DIR/components/SetupCard.qml"
   "$PLUGIN_DIR/components/ResultCard.qml"
   "$PLUGIN_DIR/components/LassoOverlay.qml"
   "$PLUGIN_DIR/components/LoadingDots.qml"

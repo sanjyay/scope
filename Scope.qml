@@ -4,7 +4,7 @@
 // available instantly on hotkey without load latency.
 //
 // State machine:
-//   Idle → Selecting → Capturing → Searching → Result
+//   Idle → CheckingReadiness → Selecting → Capturing → Searching → Result
 //   Any state → Idle (via cancel/Esc/dismiss)
 
 import QtQuick
@@ -23,7 +23,7 @@ Item {
   // Quickshell.shellDir is the shell's dir, not our plugin dir.
   // We rely on OMARCHY_PATH + our plugin id to locate scripts.
   property string omarchyPath: Quickshell.env("OMARCHY_PATH") || ""
-  readonly property string pluginId: "sanjyay.scope"
+  readonly property string pluginId: "scope"
 
   // The plugin dir is determined at install time.
   // Scripts are located relative to the manifest, which is our plugin dir.
@@ -37,8 +37,10 @@ Item {
   readonly property string detectScript: pluginDir + "/scripts/scope-detect-agent"
 
   // ── state machine ─────────────────────────────────────────────────────────
-  // "Idle" | "Selecting" | "Capturing" | "Searching" | "Result" | "UnsupportedAgent"
+  // "Idle" | "CheckingReadiness" | "SetupRequired" | "Selecting" |
+  // "Capturing" | "Searching" | "Result" | "UnsupportedAgent"
   property string scopeState: "Idle"
+  property string readinessStatus: ""
 
   // ── selection data ────────────────────────────────────────────────────────
   property var lassoPoints: []       // [{x,y}] screen-absolute
@@ -107,11 +109,30 @@ Item {
           root.scopeState = "UnsupportedAgent"
           return
         }
-        if (root.pendingSearchAfterAgentRefresh) {
-          root.pendingSearchAfterAgentRefresh = false
-          root.startInitialSearch()
-        }
+        readinessProc.generation = root.sessionGeneration
+        readinessProc.handled = false
+        readinessProc.running = true
       }
+    }
+  }
+
+  Process {
+    id: readinessProc
+    running: false
+    command: [root.helperScript, "readiness"]
+    property int generation: -1
+    property bool handled: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (readinessProc.generation !== root.sessionGeneration) return
+        readinessProc.handled = true
+        root.applyReadiness(text.trim())
+      }
+    }
+    onExited: function(code) {
+      if (readinessProc.generation !== root.sessionGeneration || readinessProc.handled) return
+      root.applyReadiness("readiness_error")
     }
   }
 
@@ -186,6 +207,10 @@ Item {
       if (raw.startsWith("{")) {
         try {
           var data = JSON.parse(raw)
+          if (typeof data.scopePrerequisite === "string" && data.scopePrerequisite) {
+            root.applyReadiness(data.scopePrerequisite)
+            return
+          }
           root.responseText = data.answer || "No answer returned."
           root.webSources = root.safeSources(data.sources || [])
         } catch(e) {
@@ -219,7 +244,7 @@ Item {
 
     root.resetSession()
     root.invocationActive = true
-    root.scopeState = "Selecting"
+    root.scopeState = "CheckingReadiness"
     refreshAgentProc.generation = root.sessionGeneration
     refreshAgentProc.running = true
   }
@@ -262,17 +287,28 @@ Item {
     root.pendingQuestion = ""
     root.latestFollowUp = ""
     root.pendingSearchAfterAgentRefresh = false
+    root.readinessStatus = ""
     root.responseGeneration = -1
     root.escalationPending = false
 
     root.sessionGeneration += 1
     if (refreshAgentProc.running) refreshAgentProc.running = false
+    if (readinessProc.running) readinessProc.running = false
     service.cancelWork()
 
     if (root.invocationId !== "") {
       service.cleanupInvocation(root.invocationId)
       root.invocationId = ""
     }
+  }
+
+  function applyReadiness(status) {
+    root.readinessStatus = status || "readiness_error"
+    if (root.readinessStatus === "ready") {
+      root.scopeState = "Selecting"
+      return
+    }
+    root.scopeState = "SetupRequired"
   }
 
   function safeSources(sources) {
@@ -530,6 +566,7 @@ Item {
       selectionH: root.selectionH
       selectionScreen: root.selectionScreen
       detectedAgent: root.detectedAgent
+      readinessStatus: root.readinessStatus
       agentDetected: root.agentDetected
       agentDetectionDone: root.agentDetectionDone
       responseText: root.responseText
