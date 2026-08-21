@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 
@@ -6,6 +7,7 @@ BorderSurface {
   id: root
 
   property string readinessStatus: ""
+  property bool retryInProgress: false
   readonly property string setupCommand:
     "codex -c 'cli_auth_credentials_store=\"keyring\"' login --device-auth"
   readonly property bool setupShowCommand: readinessStatus === "keyring_login_required"
@@ -32,6 +34,7 @@ BorderSurface {
   }
 
   signal copyRequested(string command)
+  signal retryRequested()
   signal closeRequested()
 
   width: Math.min(520, parent ? parent.width - 48 : 520)
@@ -41,14 +44,14 @@ BorderSurface {
   borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border,
                                 Math.max(1, Style.spacing.hairline))
 
-  Column {
+  ColumnLayout {
     id: content
     anchors.centerIn: parent
     width: parent.width - Style.spacing.panelPadding * 2
     spacing: Style.spacing.xxl
 
     Image {
-      anchors.horizontalCenter: parent.horizontalCenter
+      Layout.alignment: Qt.AlignHCenter
       source: Qt.resolvedUrl("../assets/scope.svg")
       sourceSize.width: Style.font.display
       sourceSize.height: Style.font.display
@@ -57,7 +60,7 @@ BorderSurface {
     }
 
     Text {
-      width: parent.width
+      Layout.fillWidth: true
       text: root.setupTitle
       textFormat: Text.PlainText
       color: Color.popups.text
@@ -69,7 +72,7 @@ BorderSurface {
     }
 
     Text {
-      width: parent.width
+      Layout.fillWidth: true
       text: root.setupMessage
       textFormat: Text.PlainText
       color: Color.popups.text
@@ -83,7 +86,7 @@ BorderSurface {
 
     Text {
       visible: root.setupShowCommand
-      width: parent.width
+      Layout.fillWidth: true
       text: "Run:"
       textFormat: Text.PlainText
       color: Color.popups.text
@@ -94,29 +97,33 @@ BorderSurface {
 
     Rectangle {
       visible: root.setupShowCommand
-      width: parent.width
-      height: commandText.implicitHeight + Style.spacing.l * 2
+      Layout.fillWidth: true
+      implicitHeight: commandText.implicitHeight + Style.spacing.lg * 2
       radius: Style.cornerRadius
       color: Style.controlFill(false, false, Color.popups.text, Color.accent)
 
       Text {
         id: commandText
-        anchors.centerIn: parent
-        width: parent.width - Style.spacing.l * 2
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Style.spacing.lg
+        anchors.rightMargin: Style.spacing.lg
+        anchors.verticalCenter: parent.verticalCenter
         text: root.setupCommand
         textFormat: Text.PlainText
+        visible: root.setupCommand.length > 0
         color: Color.popups.text
         font.pixelSize: Style.font.caption
         font.family: Style.fontFamily
         horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.WrapAnywhere
+        wrapMode: Text.Wrap
       }
     }
 
     Text {
       visible: root.setupShowCommand
-      width: parent.width
-      text: "Then open Scope again.\n\nThis uses your ChatGPT login. Scope does not store your credentials."
+      Layout.fillWidth: true
+      text: "Then return here and retry.\n\nThis uses your ChatGPT login. Scope does not store your credentials."
       textFormat: Text.PlainText
       color: Color.popups.text
       opacity: 0.78
@@ -126,16 +133,17 @@ BorderSurface {
       wrapMode: Text.Wrap
     }
 
-    Row {
-      anchors.horizontalCenter: parent.horizontalCenter
-      spacing: Style.spacing.l
+    RowLayout {
+      Layout.fillWidth: true
+      spacing: Style.spacing.lg
 
       Rectangle {
         visible: root.setupCanCopy
         property bool hovered: false
         property bool pressed: false
-        width: Style.space(140)
-        height: Style.spacing.controlHeight
+        Layout.fillWidth: true
+        Layout.preferredWidth: 1
+        Layout.preferredHeight: Style.spacing.controlHeight
         radius: Style.cornerRadius
         color: pressed ? Style.pressedFill : Style.controlFill(false, hovered, Color.popups.text, Color.accent)
         border.color: Style.controlBorder(false, hovered, Color.popups.text, Color.accent)
@@ -164,8 +172,42 @@ BorderSurface {
       Rectangle {
         property bool hovered: false
         property bool pressed: false
-        width: Style.space(120)
-        height: Style.spacing.controlHeight
+        Layout.fillWidth: true
+        Layout.preferredWidth: 1
+        Layout.preferredHeight: Style.spacing.controlHeight
+        radius: Style.cornerRadius
+        opacity: root.retryInProgress ? 0.5 : 1.0
+        color: pressed ? Style.pressedFill : Style.controlFill(false, hovered, Color.popups.text, Color.accent)
+        border.color: Style.controlBorder(false, hovered, Color.popups.text, Color.accent)
+        border.width: Style.controlBorderWidth(false, hovered)
+
+        Text {
+          anchors.centerIn: parent
+          text: "Retry"
+          textFormat: Text.PlainText
+          color: Color.popups.text
+          font.pixelSize: Style.font.body
+          font.family: Style.font.menuFamily
+        }
+        MouseArea {
+          anchors.fill: parent
+          enabled: !root.retryInProgress
+          hoverEnabled: enabled
+          cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+          onEntered: parent.hovered = true
+          onExited: parent.hovered = false
+          onPressed: parent.pressed = true
+          onReleased: parent.pressed = false
+          onClicked: root.retryRequested()
+        }
+      }
+
+      Rectangle {
+        property bool hovered: false
+        property bool pressed: false
+        Layout.fillWidth: true
+        Layout.preferredWidth: 1
+        Layout.preferredHeight: Style.spacing.controlHeight
         radius: Style.cornerRadius
         color: pressed ? Style.pressedFill : Style.controlFill(false, hovered, Color.popups.text, Color.accent)
         border.color: Style.controlBorder(false, hovered, Color.popups.text, Color.accent)

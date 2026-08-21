@@ -109,9 +109,7 @@ Item {
           root.scopeState = "UnsupportedAgent"
           return
         }
-        readinessProc.generation = root.sessionGeneration
-        readinessProc.handled = false
-        readinessProc.running = true
+        root.startReadiness()
       }
     }
   }
@@ -119,7 +117,9 @@ Item {
   Process {
     id: readinessProc
     running: false
-    command: [root.helperScript, "readiness"]
+    // Coreutils timeout owns and bounds the entire readiness process tree.
+    // The QML timer below remains a fail-closed UI fallback.
+    command: ["timeout", "--signal=TERM", "--kill-after=1", "18", root.helperScript, "readiness"]
     property int generation: -1
     property bool handled: false
     stdout: StdioCollector {
@@ -127,11 +127,25 @@ Item {
       onStreamFinished: {
         if (readinessProc.generation !== root.sessionGeneration) return
         readinessProc.handled = true
+        readinessTimeout.stop()
         root.applyReadiness(text.trim())
       }
     }
     onExited: function(code) {
       if (readinessProc.generation !== root.sessionGeneration || readinessProc.handled) return
+      readinessTimeout.stop()
+      root.applyReadiness("readiness_error")
+    }
+  }
+
+  Timer {
+    id: readinessTimeout
+    interval: 20000
+    repeat: false
+    onTriggered: {
+      if (!readinessProc.running || readinessProc.generation !== root.sessionGeneration) return
+      readinessProc.handled = true
+      readinessProc.running = false
       root.applyReadiness("readiness_error")
     }
   }
@@ -208,6 +222,13 @@ Item {
         try {
           var data = JSON.parse(raw)
           if (typeof data.scopePrerequisite === "string" && data.scopePrerequisite) {
+            if (root.invocationId !== "") {
+              service.cleanupInvocation(root.invocationId)
+              root.invocationId = ""
+            }
+            root.capturedImagePath = ""
+            root.responseText = ""
+            root.webSources = []
             root.applyReadiness(data.scopePrerequisite)
             return
           }
@@ -293,7 +314,11 @@ Item {
 
     root.sessionGeneration += 1
     if (refreshAgentProc.running) refreshAgentProc.running = false
-    if (readinessProc.running) readinessProc.running = false
+    readinessTimeout.stop()
+    if (readinessProc.running) {
+      readinessProc.handled = true
+      readinessProc.running = false
+    }
     service.cancelWork()
 
     if (root.invocationId !== "") {
@@ -309,6 +334,19 @@ Item {
       return
     }
     root.scopeState = "SetupRequired"
+  }
+
+  function startReadiness() {
+    if (readinessProc.running) return
+    readinessProc.generation = root.sessionGeneration
+    readinessProc.handled = false
+    readinessTimeout.restart()
+    readinessProc.running = true
+  }
+
+  function retryReadiness() {
+    if (root.scopeState !== "SetupRequired" || readinessProc.running) return
+    root.startReadiness()
   }
 
   function safeSources(sources) {
@@ -567,6 +605,7 @@ Item {
       selectionScreen: root.selectionScreen
       detectedAgent: root.detectedAgent
       readinessStatus: root.readinessStatus
+      readinessRunning: readinessProc.running
       agentDetected: root.agentDetected
       agentDetectionDone: root.agentDetectionDone
       responseText: root.responseText
@@ -583,6 +622,7 @@ Item {
       onRequestOpenAgent: root.escalateSession()
       onSourceOpenFailed: root.onSourceOpenFailed()
       onCancelled: root.cancelSession()
+      onRetryRequested: root.retryReadiness()
       onDismissed: root.dismiss()
     }
   }

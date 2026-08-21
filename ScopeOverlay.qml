@@ -36,6 +36,7 @@ PanelWindow {
   property var selectionScreen: null
   property string detectedAgent: ""
   property string readinessStatus: ""
+  property bool readinessRunning: false
   property bool agentDetected: false
   property bool agentDetectionDone: false
   property string responseText: ""
@@ -49,6 +50,7 @@ PanelWindow {
   // ── signals to parent ─────────────────────────────────────────────────────
   signal lassoComplete(var points, var bbox)
   signal cancelled()
+  signal retryRequested()
   signal requestOpenAgent()
   signal followUpSubmitted(string question)
   signal sourceOpenFailed()
@@ -70,12 +72,13 @@ PanelWindow {
   exclusionMode: ExclusionMode.Ignore
 
   // Grab keyboard to ensure Escape always works
-  WlrLayershell.keyboardFocus: (isActiveScreen && scopeState !== "Idle")
+  WlrLayershell.keyboardFocus: (isActiveScreen && scopeState !== "Idle" && scopeState !== "CheckingReadiness")
     ? WlrKeyboardFocus.Exclusive
     : WlrKeyboardFocus.None
 
-  // Panel is visible whenever Scope is active
-  visible: scopeState !== "Idle"
+  // Readiness is silent: do not map, dim, focus, or intercept the desktop
+  // until it resolves to selection or an actionable prerequisite card.
+  visible: scopeState !== "Idle" && scopeState !== "CheckingReadiness"
 
   // ── dim background ────────────────────────────────────────────────────────
 
@@ -89,7 +92,6 @@ PanelWindow {
         case "Capturing":
         case "Searching":
         case "Result":       return 1.0
-        case "CheckingReadiness": return 1.0
         case "SetupRequired": return 1.0
         case "UnsupportedAgent": return 1.0
         case "Error":        return 1.0
@@ -103,13 +105,15 @@ PanelWindow {
 
   SetupCard {
     id: setupNotice
-    visible: isActiveScreen && (scopeState === "SetupRequired" || scopeState === "CheckingReadiness")
+    visible: isActiveScreen && scopeState === "SetupRequired"
     readinessStatus: panel.readinessStatus
+    retryInProgress: panel.readinessRunning
     anchors.centerIn: parent
     onCopyRequested: function(command) {
       Quickshell.execDetached(["wl-copy", command])
     }
     onCloseRequested: panel.cancelled()
+    onRetryRequested: panel.retryRequested()
   }
 
 

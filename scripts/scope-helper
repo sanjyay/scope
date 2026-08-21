@@ -120,7 +120,18 @@ codex_protected_preflight() {
   local bwrap_bin codex_bin
   codex_bin=$(command -v codex 2>/dev/null) || { PREFLIGHT_STATUS="codex_missing"; return 1; }
   bwrap_bin=$(command -v bwrap 2>/dev/null) || { PREFLIGHT_STATUS="bwrap_missing"; return 1; }
-  if [[ -f $codex_bin ]] && grep -qF 'mise x "codex"' "$codex_bin" 2>/dev/null; then
+  local resolved_codex_bin resolved_mise_bin=""
+  resolved_codex_bin=$(realpath -e -- "$codex_bin" 2>/dev/null) || {
+    PREFLIGHT_STATUS="codex_missing"; return 1;
+  }
+  if command -v mise >/dev/null 2>&1; then
+    resolved_mise_bin=$(realpath -e -- "$(command -v mise)" 2>/dev/null || true)
+  fi
+  # Omarchy may expose Codex either through its launcher script or directly
+  # through a mise shim, depending on the caller's PATH. Resolve both to the
+  # same installed Codex binary before constructing the minimal-root mount.
+  if { [[ -n $resolved_mise_bin && $resolved_codex_bin == "$resolved_mise_bin" ]] ||
+       grep -qF 'mise x "codex"' "$codex_bin" 2>/dev/null; }; then
     codex_bin=$(mise which codex 2>/dev/null) || { PREFLIGHT_STATUS="codex_missing"; return 1; }
   fi
   [[ $codex_bin == /* && -f $codex_bin && -x $codex_bin ]] || { PREFLIGHT_STATUS="codex_missing"; return 1; }
@@ -183,13 +194,14 @@ codex_protected_preflight() {
 cmd_readiness() {
   [[ $# -eq 0 ]] || die "readiness: expected no args"
   ensure_runtime_base
-  local readiness_dir
+  local readiness_dir readiness_result=1
   readiness_dir=$(mktemp -d --tmpdir="$RUNTIME_BASE" readiness.XXXXXX)
   chmod 700 "$readiness_dir"
-  trap 'rm -rf -- "$readiness_dir"' RETURN
   codex_protected_preflight "$readiness_dir" || true
+  [[ $PREFLIGHT_STATUS == "ready" ]] && readiness_result=0
+  rm -rf -- "$readiness_dir"
   printf '%s\n' "$PREFLIGHT_STATUS"
-  [[ $PREFLIGHT_STATUS == "ready" ]]
+  return "$readiness_result"
 }
 
 prune_stale_quietly() {

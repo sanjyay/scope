@@ -533,6 +533,8 @@ assert_output_contains "readiness: helper exposes bounded local check" 'TIMEOUT_
   rg -n 'TIMEOUT_READINESS' "$HELPER"
 assert_output_contains "readiness: exact keyring status check is shared" 'login status' \
   rg -n 'login status' "$HELPER"
+assert_output_contains "readiness: mise shim resolves to installed Codex" 'resolved_codex_bin == "$resolved_mise_bin"' \
+  rg -n 'resolved_codex_bin.*resolved_mise_bin' "$HELPER"
 assert_output_contains "readiness: valid ChatGPT status is required" 'Logged in using ChatGPT' \
   rg -n 'Logged in using ChatGPT' "$HELPER"
 assert_output_contains "readiness: agent gate precedes protected preflight" 'if (!root.agentDetected)' \
@@ -555,6 +557,26 @@ assert_output_contains "readiness: dedicated setup card is rendered" 'SetupCard 
   rg -n 'SetupCard' "$PLUGIN_DIR/ScopeOverlay.qml"
 assert_output_contains "readiness: keyring state shows Copy command" 'text: "Copy command"' \
   rg -n 'Copy command' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: setup card shows Retry" 'text: "Retry"' \
+  rg -n 'text: "Retry"' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: Retry only requests readiness" 'onClicked: root.retryRequested()' \
+  rg -n 'onClicked: root.retryRequested' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: repeated Retry clicks are disabled" 'enabled: !root.retryInProgress' \
+  rg -n 'enabled: !root.retryInProgress' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: duplicate Retry requests coalesce" 'readinessProc.running) return' \
+  rg -n -A 3 'function retryReadiness' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: Retry reuses one readiness launcher" 'root.startReadiness()' \
+  rg -n -A 3 'function retryReadiness' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: Retry keeps SetupRequired visible while running" 'scopeState !== "SetupRequired"' \
+  rg -n -A 3 'function retryReadiness' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: changed failure type is reapplied" 'root.applyReadiness(text.trim())' \
+  rg -n -A 8 'onStreamFinished' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: retry prompt returns to current card" 'Then return here and retry.' \
+  rg -n 'Then return here and retry' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: setup buttons fill the card row" 'Layout.fillWidth: true' \
+  rg -n -F -A 90 'RowLayout {' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_not_output_contains "readiness: setup buttons have no unequal fixed widths" 'width: Style.space' \
+  rg -n -F -A 90 'RowLayout {' "$PLUGIN_DIR/components/SetupCard.qml"
 assert_output_contains "readiness: setup card has Close action" 'text: "Close"' \
   rg -n 'text: "Close"' "$PLUGIN_DIR/components/SetupCard.qml"
 assert_output_contains "readiness: copy uses structured wl-copy arguments" 'Quickshell.execDetached(["wl-copy", command])' \
@@ -567,8 +589,36 @@ assert_output_contains "readiness: ResultCard excludes SetupRequired" 'scopeStat
   rg -n 'scopeState === "Capturing"' "$PLUGIN_DIR/ScopeOverlay.qml"
 assert_output_contains "readiness: command only appears for missing keyring login" 'readinessStatus === "keyring_login_required"' \
   rg -n 'setupShowCommand' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: command text has explicit non-empty visibility" 'visible: root.setupCommand.length > 0' \
+  rg -n 'visible: root.setupCommand.length > 0' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_output_contains "readiness: command text wraps as plain text" 'wrapMode: Text.Wrap' \
+  rg -n -A 16 'id: commandText' "$PLUGIN_DIR/components/SetupCard.qml"
+assert_not_output_contains "readiness: setup card uses no undefined spacing token" 'Style.spacing.l' \
+  rg -n 'Style.spacing.l([^a-z]|$)' "$PLUGIN_DIR/components/SetupCard.qml"
 assert_output_contains "readiness: Escape closes setup state" 'onActivated: panel.cancelled()' \
   rg -n -A 2 'sequence: "Escape"' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: CheckingReadiness keeps overlay unmapped" 'scopeState !== "CheckingReadiness"' \
+  rg -n 'visible: scopeState' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: CheckingReadiness takes no keyboard focus" 'scopeState !== "CheckingReadiness"' \
+  rg -n 'WlrLayershell.keyboardFocus' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: setup card appears only for actionable failure" 'scopeState === "SetupRequired"' \
+  rg -n 'visible: isActiveScreen.*SetupRequired' "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "readiness: duplicate opens coalesce" 'if (root.invocationActive) return' \
+  rg -n -A 3 'function open' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: timeout is bounded" 'interval: 20000' \
+  rg -n -A 12 'id: readinessTimeout' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: helper process tree is independently bounded" '"timeout", "--signal=TERM", "--kill-after=1", "18"' \
+  rg -n 'command:.*timeout.*readiness' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: timeout kills only readiness process" 'readinessProc.running = false' \
+  rg -n -A 12 'id: readinessTimeout' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: cancellation invalidates late output" 'readinessProc.handled = true' \
+  rg -n -A 10 'readinessTimeout.stop' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: failures clear on session reset" 'root.readinessStatus = ""' \
+  rg -n -A 30 'function resetSession' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: backend prerequisite race cleans invocation" 'service.cleanupInvocation(root.invocationId)' \
+  rg -n -A 12 'data.scopePrerequisite' "$PLUGIN_DIR/Scope.qml"
+assert_output_contains "readiness: malformed status fails closed to setup" 'status || "readiness_error"' \
+  rg -n -A 8 'function applyReadiness' "$PLUGIN_DIR/Scope.qml"
 assert_output_contains "readiness: every open starts a fresh agent refresh" 'refreshAgentProc.running = true' \
   rg -n -A 16 'function open' "$PLUGIN_DIR/Scope.qml"
 assert_output_contains "readiness: every Codex invocation starts a fresh preflight" 'readinessProc.running = true' \
@@ -586,7 +636,7 @@ assert_not_output_contains "readiness: no auth file fallback" 'auth.json' \
 
 # Mock executable discovery without relying on the machine's installed tools.
 READINESS_MISSING=$(mktemp -d)
-for tool in id mkdir chmod mktemp rm dirname; do ln -s "/usr/bin/$tool" "$READINESS_MISSING/$tool"; done
+for tool in id mkdir chmod mktemp rm dirname realpath; do ln -s "/usr/bin/$tool" "$READINESS_MISSING/$tool"; done
 if READINESS_OUT=$(PATH="$READINESS_MISSING" "$HELPER" readiness 2>&1); then
   fail "readiness: missing Codex should fail closed"
 elif [[ $READINESS_OUT == *codex_missing* ]]; then
