@@ -251,6 +251,12 @@ printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\
 chmod 600 "$FAKE_PNG2"
 
 Q="$INJ_DIR/q_test.txt"
+INJ_BIN=$(mktemp -d)
+cat > "$INJ_BIN/bwrap" <<'MOCK'
+#!/bin/bash
+exit 1
+MOCK
+chmod 700 "$INJ_BIN/bwrap"
 
 # Use a bash array so payloads are never word-split or glob-expanded.
 # Each entry is a literal question text that an attacker might embed in content.
@@ -265,11 +271,9 @@ for payload in "${PAYLOADS[@]}"; do
   # Write as literal bytes to the question file
   printf '%s' "$payload" > "$Q"
   chmod 600 "$Q"
-  # scope-helper reads this file and passes it to the agent via stdin/file.
-  # The question should never be eval'd. Codex won't run here (no auth),
-  # but the important property is: the shell command in the payload does
-  # not execute at scope-helper's level.
-  "$HELPER" search "$INJ_ID" "$FAKE_PNG2" "$Q" "codex" >/dev/null 2>&1 || true
+  # Fail bwrap deliberately so this unit test never contacts the real agent.
+  # The important property is that helper-level parsing never executes payloads.
+  PATH="$INJ_BIN:$PATH" "$HELPER" search "$INJ_ID" "$FAKE_PNG2" "$Q" "codex" >/dev/null 2>&1 || true
 done
 
 # Verify no sentinel was created by helper-level execution
@@ -283,6 +287,7 @@ fi
 pass "shell injection: question file is read as data (file path, not cmdline arg)"
 
 "$HELPER" cleanup "$INJ_ID" >/dev/null 2>&1 || true
+rm -rf "$INJ_BIN"
 
 echo ""
 
@@ -410,7 +415,7 @@ else
   fail "search: still automatically opening google"
 fi
 
-if grep -q "codex exec.*tools.web_search.enabled=true" "$HELPER"; then
+if grep -q "tools.web_search.enabled=true" "$HELPER"; then
   pass "search: explicitly uses codex web search tool"
 else
   fail "search: missing tools.web_search.enabled=true"
@@ -421,6 +426,105 @@ if grep -q "schema.*json" "$HELPER"; then
 else
   fail "search: does not use JSON schema output"
 fi
+
+echo ""
+echo "§9a Whole-process protected Search sandbox"
+
+assert_output_contains "sandbox: starts from an empty root" '"--tmpfs" "/"' \
+  rg -n -- '--tmpfs.*"/"' "$HELPER"
+if rg -q -- '--bind / /|--ro-bind / /|"--bind" "/" "/"|"--ro-bind" "/" "/"' "$HELPER"; then
+  fail "sandbox: broad root bind remains"
+else
+  pass "sandbox: no --bind / / or --ro-bind / /"
+fi
+assert_output_contains "sandbox: disables model shell tool" "features.shell_tool=false" \
+  rg -n "features.shell_tool=false" "$HELPER"
+assert_output_contains "sandbox: disables native path image tool" "features.view_image=false" \
+  rg -n "features.view_image=false" "$HELPER"
+assert_output_contains "sandbox: requires keyring credential storage" 'cli_auth_credentials_store="keyring"' \
+  rg -n "cli_auth_credentials_store" "$HELPER"
+assert_not_output_contains "sandbox: never mounts auth.json" "auth.json" \
+  rg -n "auth.json" "$HELPER"
+assert_output_contains "sandbox: exposes only Secret Service user socket" 'user_bus="/run/user/$scope_uid/bus"' \
+  rg -n "user_bus=" "$HELPER"
+assert_output_contains "sandbox: clears inherited environment" '"--clearenv"' \
+  rg -n -- '--clearenv' "$HELPER"
+
+# Exercise the real production bwrap construction with a harmless fake Codex.
+# The fake runs as the entire Codex process inside the resulting namespace, so
+# direct file checks cover native/non-shell visibility as well as subprocesses.
+SANDBOX_BIN=$(mktemp -d)
+mkdir -p "$SANDBOX_BIN/bin"
+SANDBOX_HOST_HOME=$(mktemp -d /tmp/scope-sandbox-home.XXXXXX)
+SANDBOX_HOST_MARKER=/tmp/scope-host-marker-permanent-test
+printf 'SCOPE_AUTOMATED_HOME_MARKER' > "$SANDBOX_HOST_HOME/home-marker"
+printf 'SCOPE_AUTOMATED_TMP_MARKER' > "$SANDBOX_HOST_MARKER"
+SANDBOX_ID=$(dd if=/dev/urandom bs=8 count=1 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+SANDBOX_DIR="$RUNTIME_BASE/$SANDBOX_ID"
+mkdir -p "$SANDBOX_DIR"
+chmod 700 "$SANDBOX_DIR"
+printf 'png' > "$SANDBOX_DIR/capture.png"
+printf 'sandbox regression' > "$SANDBOX_DIR/question.txt"
+ln -s "$SANDBOX_HOST_HOME/home-marker" "$SANDBOX_DIR/escape-link"
+chmod 600 "$SANDBOX_DIR/capture.png" "$SANDBOX_DIR/question.txt"
+cat > "$SANDBOX_BIN/bin/codex" <<MOCK
+#!/bin/bash
+set -euo pipefail
+if [[ \${*:-} == *"login status"* ]]; then
+  echo "Logged in using ChatGPT" >&2
+  exit 0
+fi
+output_file=""
+image_file=""
+schema_file=""
+while (( \$# )); do
+  case "\$1" in
+    -o) output_file="\$2"; shift 2 ;;
+    -i) image_file="\$2"; shift 2 ;;
+    --output-schema) schema_file="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ -r "\$image_file" && -r "\$schema_file" ]]
+[[ ! -e "$SANDBOX_HOST_HOME/home-marker" ]]
+[[ ! -e "$SANDBOX_HOST_MARKER" ]]
+[[ ! -e "$SANDBOX_DIR/escape-link" ]]
+[[ ! -e "/proc/self/root$SANDBOX_HOST_HOME/home-marker" ]]
+[[ ! -e "$SANDBOX_HOST_HOME/.codex/auth.json" ]]
+printf '%s\n' '{"answer":"sandbox-ok","sources":[]}' > "\$output_file"
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"sandbox-ok"}}'
+MOCK
+chmod 700 "$SANDBOX_BIN/bin/codex"
+
+if HOME="$SANDBOX_HOST_HOME" PATH="$SANDBOX_BIN/bin:$PATH" \
+    "$HELPER" search "$SANDBOX_ID" "$SANDBOX_DIR/capture.png" "$SANDBOX_DIR/question.txt" codex \
+    > "$SANDBOX_DIR/stdout" 2> "$SANDBOX_DIR/stderr" && \
+    grep -qF 'sandbox-ok' "$SANDBOX_DIR/response.txt"; then
+  pass "sandbox: whole Codex process sees selection/schema but not host home, tmp, symlink, proc-root, or auth.json"
+else
+  fail "sandbox: executable whole-process filesystem regression failed"
+fi
+
+# A failed isolation launcher must produce the protected-search error and must
+# never execute Codex outside bwrap.
+FAIL_BIN=$(mktemp -d)
+cat > "$FAIL_BIN/bwrap" <<'MOCK'
+#!/bin/bash
+exit 70
+MOCK
+chmod 700 "$FAIL_BIN/bwrap"
+if HOME="$SANDBOX_HOST_HOME" PATH="$FAIL_BIN:$SANDBOX_BIN/bin:$PATH" \
+    "$HELPER" search "$SANDBOX_ID" "$SANDBOX_DIR/capture.png" "$SANDBOX_DIR/question.txt" codex \
+    >/dev/null 2>&1 && \
+    grep -qF 'Protected search isolation could not be established' "$SANDBOX_DIR/response.txt" && \
+    ! grep -qF 'sandbox-ok' "$SANDBOX_DIR/response.txt"; then
+  pass "sandbox: isolation failure aborts without fallback"
+else
+  fail "sandbox: isolation failure did not fail closed"
+fi
+
+rm -rf "$FAIL_BIN" "$SANDBOX_BIN" "$SANDBOX_HOST_HOME" "$SANDBOX_DIR"
+rm -f "$SANDBOX_HOST_MARKER"
 
 echo ""
 echo "§10 Circle-to-Search UI and lifecycle"
@@ -785,6 +889,12 @@ assert_not_output_contains "lasso: live path does not call closePath" "drawPath(
   rg -n "drawPath\(!root.drawing\)" "$PLUGIN_DIR/components/LassoOverlay.qml"
 assert_output_contains "lasso: reset clears currentPointerPoint" "root.currentPointerPoint = null" \
   rg -n "root.currentPointerPoint = null" "$PLUGIN_DIR/components/LassoOverlay.qml"
+assert_output_contains "lasso: completed outline remains visible for three seconds" "interval: 3000" \
+  rg -n -A 3 "id: finalOutlineTimer" "$PLUGIN_DIR/ScopeOverlay.qml"
+assert_output_contains "follow-up: result state schedules autofocus" "Qt.callLater(focusFollowUp)" \
+  rg -n "Qt.callLater" "$PLUGIN_DIR/components/ResultCard.qml"
+assert_output_contains "follow-up: autofocus targets the input" "followUp.forceActiveFocus()" \
+  rg -n "forceActiveFocus" "$PLUGIN_DIR/components/ResultCard.qml"
 
 
 echo -e "\n§17 Activity Streaming"

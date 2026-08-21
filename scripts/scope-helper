@@ -423,10 +423,133 @@ USER QUESTION:
 }
 SCHEMA
 
+  local bwrap_bin
+  bwrap_bin=$(command -v bwrap 2>/dev/null) || {
+    echo '{"answer":"Protected search isolation could not be established. bwrap is required.","sources":[]}' > "$response_file"
+    return
+  }
+
+  local codex_bin
+  codex_bin=$(command -v codex 2>/dev/null) || {
+    echo '{"answer":"Protected search isolation could not be established. Codex is unavailable.","sources":[]}' > "$response_file"
+    return
+  }
+  # Omarchy's command is a mise launcher. Resolve the installed binary without
+  # mounting the launcher, mise configuration, or any other home content.
+  if [[ -f $codex_bin ]] && grep -qF 'mise x "codex"' "$codex_bin" 2>/dev/null; then
+    codex_bin=$(mise which codex 2>/dev/null) || {
+      echo '{"answer":"Protected search isolation could not be established. Codex runtime could not be resolved.","sources":[]}' > "$response_file"
+      return
+    }
+  fi
+  [[ $codex_bin == /* && -f $codex_bin && -x $codex_bin ]] || {
+    echo '{"answer":"Protected search isolation could not be established. Codex runtime is invalid.","sources":[]}' > "$response_file"
+    return
+  }
+
+  local codex_install_dir
+  codex_install_dir=$(dirname "$(dirname "$codex_bin")")
+  local sandbox_codex_dir="/opt/scope-codex"
+  local sandbox_codex_bin="$sandbox_codex_dir/bin/$(basename "$codex_bin")"
+  local scope_home="${HOME:-}"
+  [[ $scope_home == /* ]] || {
+    echo '{"answer":"Protected search isolation could not be established. HOME is invalid.","sources":[]}' > "$response_file"
+    return
+  }
+  local scope_user scope_uid scope_codex_home user_bus
+  scope_user=$(id -un)
+  scope_uid=$(id -u)
+  scope_codex_home="$scope_home/.codex"
+  user_bus="/run/user/$scope_uid/bus"
+  [[ -S $user_bus ]] || {
+    echo '{"answer":"Protected search isolation could not be established. Secret Service is unavailable.","sources":[]}' > "$response_file"
+    return
+  }
+
+  # Whole-process isolation: start from an empty root and expose only runtime
+  # dependencies, the Codex installation, Secret Service, and this invocation.
+  # HOME/CODEX_HOME keep their logical names for keyring lookup but are empty.
+  local bwrap_args=(
+    "--tmpfs" "/"
+    "--ro-bind" "/usr" "/usr"
+    "--ro-bind" "/lib" "/lib"
+    "--ro-bind" "/bin" "/bin"
+    "--dev" "/dev"
+    "--proc" "/proc"
+    "--tmpfs" "/tmp"
+    "--dir" "/etc"
+    "--dir" "/opt"
+    "--ro-bind" "$codex_install_dir" "$sandbox_codex_dir"
+    "--dir" "/home"
+    "--dir" "$scope_home"
+    "--dir" "$scope_codex_home"
+    "--dir" "/run"
+    "--dir" "/run/user"
+    "--dir" "/run/user/$scope_uid"
+    "--ro-bind" "$user_bus" "$user_bus"
+    "--dir" "/run/user/$scope_uid/scope"
+    "--bind" "$inv_dir" "$inv_dir"
+    "--chdir" "$inv_dir"
+    "--clearenv"
+    "--setenv" "HOME" "$scope_home"
+    "--setenv" "CODEX_HOME" "$scope_codex_home"
+    "--setenv" "USER" "$scope_user"
+    "--setenv" "LOGNAME" "$scope_user"
+    "--setenv" "PATH" "/usr/bin:/bin"
+    "--setenv" "LANG" "C.UTF-8"
+    "--setenv" "XDG_RUNTIME_DIR" "/run/user/$scope_uid"
+    "--setenv" "DBUS_SESSION_BUS_ADDRESS" "unix:path=$user_bus"
+    "--unshare-all"
+    "--share-net"
+    "--die-with-parent"
+    "--new-session"
+  )
+  [[ -d /lib64 ]] && bwrap_args+=( "--ro-bind" "/lib64" "/lib64" )
+
+  local runtime_etc_path
+  for runtime_etc_path in \
+    /etc/ssl /etc/ca-certificates /etc/pki /etc/ld.so.conf.d \
+    /etc/hosts /etc/nsswitch.conf /etc/gai.conf /etc/host.conf \
+    /etc/passwd /etc/group /etc/machine-id /etc/localtime \
+    /etc/os-release /etc/ld.so.cache /etc/ld.so.conf /etc/resolv.conf; do
+    [[ -e $runtime_etc_path || -L $runtime_etc_path ]] && \
+      bwrap_args+=( "--ro-bind" "$runtime_etc_path" "$runtime_etc_path" )
+  done
+  if [[ -e /run/systemd/resolve ]]; then
+    bwrap_args+=( "--dir" "/run/systemd" "--ro-bind" "/run/systemd/resolve" "/run/systemd/resolve" )
+  fi
+
+  local codex_common_args=( "-c" 'cli_auth_credentials_store="keyring"' )
+  local auth_status
+  auth_status=$("$bwrap_bin" "${bwrap_args[@]}" -- \
+    "$sandbox_codex_bin" "${codex_common_args[@]}" login status 2>&1) || {
+    echo '{"answer":"Protected search isolation could not be established. Keyring authentication is unavailable.","sources":[]}' > "$response_file"
+    return
+  }
+  if [[ $auth_status != *"Logged in using ChatGPT"* ]]; then
+    echo '{"answer":"Protected search isolation could not be established. Keyring authentication is unavailable.","sources":[]}' > "$response_file"
+    return
+  fi
+
   local exit_code=0
   # `setsid` gives this Scope-owned search a private process group, allowing
   # Escape to stop Codex and its helper without affecting other Codex sessions.
-  setsid timeout "$TIMEOUT_AGENT" codex exec --json -c tools.web_search.enabled=true --output-schema "$schema_file" --ephemeral --sandbox read-only --ignore-user-config --ignore-rules --skip-git-repo-check -C "$inv_dir" -i "$image_path" -o "$response_file" - < "$prompt_file" 2>/dev/null &
+  setsid timeout "$TIMEOUT_AGENT" "$bwrap_bin" "${bwrap_args[@]}" -- \
+    "$sandbox_codex_bin" exec --json --strict-config \
+      "${codex_common_args[@]}" \
+      -c tools.web_search.enabled=true \
+      -c features.shell_tool=false \
+      -c features.view_image=false \
+      --output-schema "$schema_file" \
+      --ephemeral \
+      --sandbox read-only \
+      --ignore-user-config \
+      --ignore-rules \
+      --skip-git-repo-check \
+      -C "$inv_dir" \
+      -i "$image_path" \
+      -o "$response_file" \
+      - < "$prompt_file" &
   _active_child_pid=$!
   wait "$_active_child_pid" || exit_code=$?
   _active_child_pid=""

@@ -60,6 +60,17 @@ easily selectable or worth turning into a separate screenshot file.
 6. Ask a follow-up using the same selected image, or choose **Open Agent** for
    an interactive Codex session with the visual context.
 
+## Architecture
+
+Scope operates as a Wayland-native, sandboxed overlay.
+
+### Protective Boundaries
+
+1. **Restricted filesystem**: Protected Search runs the entire Codex process in a minimal `bubblewrap` filesystem containing system runtime files and the current Scope session only. Arbitrary home, project, and host `/tmp` files are not visible.
+2. **Minimal tools**: Protected Search keeps supplied-image input and web search while disabling model-controlled shell and path-based image tools.
+3. **Fail closed**: Scope requires keyring-backed ChatGPT authentication and aborts if the protected filesystem or authentication channel cannot be established.
+4. **Explicit escalation**: **Open Agent** launches the user's normal interactive Codex session with normal permissions.
+
 ## Use cases
 
 ### Errors and debugging
